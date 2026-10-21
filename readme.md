@@ -18,31 +18,43 @@ By leveraging Cockpit's native `spawn` API, the extension communicates directly 
 * Storage Breakdown & Features: Visual progress bars for Data and Metadata chunk allocation with usage warnings, alongside auto-detection of compression algorithms (`zstd`, `lzo`) and mount features.
 * Maintenance & Optimization: Non-blocking background scrub and balance with live terminal tracking, multi-volume concurrency, and targeted subvolume defragmentation.
 
-## Dependencies
-Make sure the following packages are installed on your system:
+## Supported Linux Ecosystems
+Official compatibility is guaranteed for the following Linux distributions and their derivatives:
+* **Debian Ecosystem (`apt`)**: Debian, Ubuntu, Linux Mint, Pop!_OS, Proxmox VE, Kali Linux, Zorin OS, etc.
+* **RHEL / Fedora Ecosystem (`dnf`)**: Fedora, RHEL, Rocky Linux, AlmaLinux, CentOS Stream, Nobara, etc.
+* **Arch Linux Ecosystem (`pacman`)**: Arch Linux, Manjaro, EndeavourOS, CachyOS, Garuda Linux, etc.
 
-* `cockpit`: The core Cockpit web console.
-* `btrfs-progs`: BTRFS filesystem management CLI tools.
-* `util-linux`: Provides `lsblk` and `findmnt` used for storage topology discovery.
-* `snapper` *(recommended)*: Required for automated timeline snapshots, retention limits, and cleanup schedules.
-  * **Fedora / RHEL**: `sudo dnf install snapper`
-  * **Arch Linux**: `sudo pacman -S snapper`
-  * **Debian / Ubuntu**: `sudo apt install snapper`
+## Quick Installation (Recommended — Fresh OS Ready)
+Run the following one-line command to automatically detect your OS, install all required dependencies (`cockpit`, `btrfs-progs`, `snapper`, `cron`/`cronie`, core utilities), enable services, and install **BTRFS Manager** into `/usr/share/cockpit/btrfs-manager`:
 
-## Installation
-Because this is a vanilla frontend extension, no build process is required. You can install it simply by cloning the repository into your Cockpit extensions directory:
-
-### User-only (no root required)
 ```bash
-git clone https://github.com/NGxID18/btrfs-manager ~/.local/share/cockpit/btrfs-manager
+curl -sSL https://raw.githubusercontent.com/NGxID18/btrfs-manager/main/install.sh | sudo bash
 ```
+
+## Manual Installation
+If you prefer to install manually, ensure the following packages are installed on your system:
+
+* `cockpit`: The core Cockpit web console (`cockpit.socket` enabled).
+* `btrfs-progs`: BTRFS filesystem management CLI tools.
+* `util-linux` & `e2fsprogs`: Provides `lsblk`, `findmnt`, `blkid`, `wipefs`, `lsattr`, and `chattr`.
+* `snapper` & `cron`/`cronie`: Required for automated scheduled snapshots, retention limits, and cleanup schedules.
+  * **Debian / Ubuntu**: `sudo apt install cockpit btrfs-progs snapper cron anacron util-linux e2fsprogs git`
+  * **Fedora / RHEL**: `sudo dnf install cockpit btrfs-progs snapper cronie cronie-anacron util-linux e2fsprogs git`
+  * **Arch Linux**: `sudo pacman -S cockpit btrfs-progs snapper cronie util-linux e2fsprogs git`
+
+Then clone the repository into your Cockpit extensions directory:
 
 ### System-wide (all users)
 ```bash
 sudo git clone https://github.com/NGxID18/btrfs-manager /usr/share/cockpit/btrfs-manager
 ```
 
-After cloning, log in to Cockpit (or refresh the page) and select **BTRFS** from the sidebar.
+### User-only (no root required)
+```bash
+git clone https://github.com/NGxID18/btrfs-manager ~/.local/share/cockpit/btrfs-manager
+```
+
+After installation, log in to Cockpit (`https://<server-ip>:9090`) and select **BTRFS** from the sidebar.
 
 ## Usage Notes
 * **Master View**: Provides a dashboard grid of all detected BTRFS pools, showing raw size, usable space, active RAID profiles, and snapshot schedules.
