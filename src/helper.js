@@ -1,8 +1,7 @@
 window.$ = (id) => document.getElementById(id);
-window.on = (id, evt, cb) => {
-  const e = $(id);
-  if (e) e.addEventListener(evt, cb);
-};
+window.on = (id, evt, cb) => $(id)?.addEventListener(evt, cb);
+window.boxId = (mnt) => (mnt || "root").replace(/[^a-zA-Z0-9]/g, "-");
+
 window.cmd = (args, opts = {}) =>
   cockpit.spawn(args, {
     superuser: "require",
@@ -20,84 +19,138 @@ window.escapeHtml = (s) =>
 
 window.parseSize = (s) => {
   if (!s) return 0;
-  const m = s.match(/([0-9.]+)\s*([a-zA-Z]+)/);
-  return m
-    ? parseFloat(m[1]) *
-        ({ K: 1024, M: 1048576, G: 1073741824, T: 1099511627776, P: 1125899906842624 }[
-          m[2][0].toUpperCase()
-        ] || 1)
-    : 0;
+  const m = String(s).match(/([0-9.]+)\s*([KMGTPE]?)/i);
+  if (!m) return 0;
+  const exp = { K: 1, M: 2, G: 3, T: 4, P: 5, E: 6 }[m[2].toUpperCase()] || 0;
+  return parseFloat(m[1]) * Math.pow(1024, exp);
 };
 
 window.formatSize = (b) => {
   if (!b || isNaN(b) || b <= 0) return "0 B";
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
   const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), units.length - 1);
-  if (i <= 0) return `${Math.round(b)} B`;
-  return `${(b / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+  return i <= 0 ? `${Math.round(b)} B` : `${(b / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+};
+
+window.Sh = {
+  mountTopLevel: `
+DEV=$(findmnt -n -o SOURCE -T "$MNT" 2>/dev/null | head -n 1 | sed 's/\\[.*\\]//')
+[ -z "$DEV" ] && DEV=$(df -P "$MNT" 2>/dev/null | awk 'NR==2 {print $1}')
+case "$DEV" in
+  UUID=*|LABEL=*) DEV=$(blkid -t "$DEV" -o device 2>/dev/null | head -n 1) ;;
+esac
+TMP=$(mktemp -d)
+IS_MOUNTED=0
+cleanup_tmp() {
+  if [ "\${IS_MOUNTED:-0}" -eq 1 ]; then
+    umount "$TMP" 2>/dev/null || umount -l "$TMP" 2>/dev/null || true
+  fi
+  rmdir "$TMP" 2>/dev/null || true
+}
+trap cleanup_tmp EXIT
+if [ -n "$DEV" ]; then
+  if mount -t btrfs -o subvolid=5 "$DEV" "$TMP" 2>/dev/null || \\
+     mount -t btrfs -o subvolid=5,context="system_u:object_r:tmp_t:s0" "$DEV" "$TMP" 2>/dev/null; then
+    IS_MOUNTED=1
+  fi
+fi
+resolve_subvol_path() {
+  _sp="$1"
+  TARGET_PATH=""
+  if [ "$IS_MOUNTED" -eq 1 ] && [ -e "$TMP/$_sp" ]; then
+    TARGET_PATH="$TMP/$_sp"
+  elif [ -e "$MNT/$_sp" ]; then
+    TARGET_PATH="$MNT/$_sp"
+  elif [ -e "/$_sp" ]; then
+    TARGET_PATH="/$_sp"
+  fi
+  [ -n "$TARGET_PATH" ]
+}
+in_fstab() {
+  awk -v sp="$1" '!/^[[:space:]]*#/ && NF>=4 {
+    n=split($4, o, ",");
+    for(i=1;i<=n;i++) if(o[i]=="subvol="sp || o[i]=="subvol=/"sp || o[i]=="subvol=@"sp || o[i]=="subvol=/@"sp) {f=1; exit}
+  } END {exit !f}' /etc/fstab 2>/dev/null
+}
+`,
+  cleanSnapperFn: `
+clean_target_cron() {
+  _tgt="$1"
+  _cfg="$2"
+  for _cdir in /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
+    [ -d "$_cdir" ] || continue
+    for _cf in "$_cdir"/btrfs_*; do
+      [ -f "$_cf" ] || continue
+      if { [ -n "$_tgt" ] && grep -qxF "# Target: $_tgt" "$_cf" 2>/dev/null; } || \\
+         { [ -n "$_cfg" ] && [ "$_cfg" != "Config" ] && { [ "$(basename "$_cf")" = "btrfs_snap_$_cfg" ] || grep -qxF "# Config: $_cfg" "$_cf" 2>/dev/null; }; }; then
+        rm -f "$_cf" 2>/dev/null || true
+      fi
+    done
+  done
+}
+purge_snapper_cfg() {
+  _cfg="$1"
+  [ -z "$_cfg" ] || [ "$_cfg" = "Config" ] && return 0
+  if command -v snapper >/dev/null 2>&1; then
+    snapper -c "$_cfg" delete-config 2>/dev/null || true
+  fi
+  rm -f "/etc/snapper/configs/$_cfg" 2>/dev/null || true
+  clean_target_cron "" "$_cfg"
+  for _f in /etc/conf.d/snapper /etc/default/snapper /etc/sysconfig/snapper; do
+    if [ -f "$_f" ]; then
+      sed -i -E "/^SNAPPER_CONFIGS=/ { s/\\b$_cfg\\b//g; s/\"[[:space:]]+/\"/; s/[[:space:]]+\"/\"/; s/[[:space:]]+/ /g; }" "$_f" 2>/dev/null || true
+    fi
+  done
+}
+`,
 };
 
 window.Modal = {
   cb: null,
   show(title, msg, type = "alert", opts = null, cb = null, btnText = null, isDanger = false) {
-    try {
-      if (!$("generic-modal")) return;
-      $("generic-modal-title").innerText = title;
-      $("generic-modal-message").innerText = msg;
+    const modal = $("generic-modal");
+    if (!modal) return;
+    $("generic-modal-title").innerText = title;
+    $("generic-modal-message").innerText = msg;
 
-      const inputContainer = $("generic-modal-input-container");
-      if (inputContainer) {
-        inputContainer.classList.toggle(
-          "hidden-element",
-          type === "alert" || type === "confirm",
-        );
-      }
+    $("generic-modal-input-container")?.classList.toggle(
+      "hidden-element",
+      type === "alert" || type === "confirm",
+    );
 
-      const inputEl = $("generic-modal-input");
-      if (inputEl) {
-        inputEl.classList.toggle("hidden-element", type !== "prompt");
-      }
+    const inputEl = $("generic-modal-input");
+    inputEl?.classList.toggle("hidden-element", type !== "prompt");
 
-      const selectEl = $("generic-modal-select");
-      if (selectEl) {
-        selectEl.classList.toggle("hidden-element", type !== "select");
-      }
+    const selectEl = $("generic-modal-select");
+    selectEl?.classList.toggle("hidden-element", type !== "select");
 
-      const cancelBtn = $("generic-modal-cancel");
-      if (cancelBtn) {
-        cancelBtn.classList.toggle("hidden-element", type === "alert");
-      }
+    $("generic-modal-cancel")?.classList.toggle("hidden-element", type === "alert");
 
-      const confirmBtn = $("generic-modal-confirm");
-      if (confirmBtn) {
-        confirmBtn.innerText = btnText || (type === "alert" ? "OK" : "Confirm");
-        confirmBtn.classList.toggle("btn-danger", Boolean(isDanger));
-        confirmBtn.classList.toggle("btn-primary", !isDanger);
-      }
-
-      if (type === "prompt" && inputEl) {
-        inputEl.value = opts || "";
-        setTimeout(() => {
-          inputEl.focus();
-          inputEl.select();
-        }, 100);
-      }
-      if (type === "select" && selectEl) {
-        selectEl.innerHTML = (opts || [])
-          .map((o) => `<option value="${o.v}">${o.l}</option>`)
-          .join("");
-        setTimeout(() => selectEl.focus(), 100);
-      }
-
-      this.cb = cb;
-      $("generic-modal").classList.remove("hidden-element");
-    } catch (e) {
-      console.error("Modal Engine Crash:", e);
+    const confirmBtn = $("generic-modal-confirm");
+    if (confirmBtn) {
+      confirmBtn.innerText = btnText || (type === "alert" ? "OK" : "Confirm");
+      confirmBtn.classList.toggle("btn-danger", Boolean(isDanger));
+      confirmBtn.classList.toggle("btn-primary", !isDanger);
     }
+
+    if (type === "prompt" && inputEl) {
+      inputEl.value = opts || "";
+      setTimeout(() => {
+        inputEl.focus();
+        inputEl.select();
+      }, 80);
+    } else if (type === "select" && selectEl) {
+      selectEl.innerHTML = (opts || [])
+        .map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`)
+        .join("");
+      setTimeout(() => selectEl.focus(), 80);
+    }
+
+    this.cb = cb;
+    modal.classList.remove("hidden-element");
   },
   close() {
-    const m = $("generic-modal");
-    if (m) m.classList.add("hidden-element");
+    $("generic-modal")?.classList.add("hidden-element");
     this.cb = null;
   },
   confirm() {
@@ -115,83 +168,30 @@ window.Modal = {
   },
 };
 
-window.customAlert = (title, message) => {
+window.customAlert = (title, message) =>
   Modal.show(title, message, "alert", null, null, "OK", false);
-};
-window.customConfirm = (
-  title,
-  message,
-  confirmBtnText,
-  onConfirm,
-  isDanger = false,
-) => {
-  Modal.show(
-    title,
-    message,
-    "confirm",
-    null,
-    onConfirm,
-    confirmBtnText || "Confirm",
-    isDanger,
-  );
-};
-window.customPrompt = (
-  title,
-  message,
-  defaultVal,
-  confirmBtnText,
-  onConfirm,
-) => {
-  Modal.show(
-    title,
-    message,
-    "prompt",
-    defaultVal,
-    onConfirm,
-    confirmBtnText || "Submit",
-    false,
-  );
-};
-window.customSelect = (title, message, options, confirmBtnText, onConfirm) => {
-  Modal.show(
-    title,
-    message,
-    "select",
-    options,
-    onConfirm,
-    confirmBtnText || "Select",
-    false,
-  );
-};
+
+window.customConfirm = (title, message, confirmBtnText, onConfirm, isDanger = false) =>
+  Modal.show(title, message, "confirm", null, onConfirm, confirmBtnText || "Confirm", isDanger);
+
+window.customPrompt = (title, message, defaultVal, confirmBtnText, onConfirm) =>
+  Modal.show(title, message, "prompt", defaultVal, onConfirm, confirmBtnText || "Submit", false);
+
+window.customSelect = (title, message, options, confirmBtnText, onConfirm) =>
+  Modal.show(title, message, "select", options, onConfirm, confirmBtnText || "Select", false);
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (
-      $("generic-modal") &&
-      !$("generic-modal").classList.contains("hidden-element")
-    ) {
-      Modal.close();
-    }
-    if (
-      $("add-dev-modal") &&
-      !$("add-dev-modal").classList.contains("hidden-element")
-    ) {
-      $("add-dev-modal").classList.add("hidden-element");
-    }
-    if (
-      $("destroy-vol-modal") &&
-      !$("destroy-vol-modal").classList.contains("hidden-element")
-    ) {
-      $("destroy-vol-modal").classList.add("hidden-element");
-    }
-  } else if (e.key === "Enter") {
-    if (
-      $("generic-modal") &&
-      !$("generic-modal").classList.contains("hidden-element") &&
-      document.activeElement === $("generic-modal-input")
-    ) {
-      e.preventDefault();
-      Modal.confirm();
-    }
+    ["generic-modal", "add-dev-modal", "destroy-vol-modal"].forEach((id) =>
+      $(id)?.classList.add("hidden-element"),
+    );
+    Modal.cb = null;
+  } else if (
+    e.key === "Enter" &&
+    !$("generic-modal")?.classList.contains("hidden-element") &&
+    document.activeElement === $("generic-modal-input")
+  ) {
+    e.preventDefault();
+    Modal.confirm();
   }
 });

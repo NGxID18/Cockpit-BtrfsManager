@@ -45,7 +45,7 @@ OS_ID="unknown"
 OS_ID_LIKE=""
 
 if [ -f /etc/os-release ]; then
-    # shellcheck disable=SC1091
+
     . /etc/os-release
     OS_NAME="${PRETTY_NAME:-$NAME}"
     OS_ID="${ID:-unknown}"
@@ -222,8 +222,9 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "${BLUE}[5/5] Setting file permissions and finalizing installation...${NC}"
 
-chown -R root:root "$TARGET_DIR" 2>/dev/null || true
-chmod -R 755 "$TARGET_DIR"
+chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$TARGET_DIR" 2>/dev/null || true
+chmod -R u=rwX,go=rX "$TARGET_DIR"
+chmod 755 "$TARGET_DIR/install.sh" 2>/dev/null || true
 
 # Restart cockpit service gently if running so it picks up the new manifest immediately
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then

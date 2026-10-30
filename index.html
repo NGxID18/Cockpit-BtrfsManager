@@ -5,12 +5,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="../base1/cockpit.css" type="text/css" rel="stylesheet" />
-    <link href="style.css?v=22" type="text/css" rel="stylesheet" />
+    <link href="style.css?v=23" type="text/css" rel="stylesheet" />
 
     <script src="../base1/cockpit.js"></script>
-    <script src="src/helper.js?v=22"></script>
-    <script src="src/engine.js?v=22" defer></script>
-    <script src="src/router.js?v=22" defer></script>
+    <script src="src/helper.js?v=23"></script>
+    <script src="src/engine.js?v=23" defer></script>
+    <script src="src/router.js?v=23" defer></script>
   </head>
   <body>
     <div id="view-master">
@@ -33,16 +33,11 @@
       <div id="orphan-snap-container" class="orphan-snap-box hidden-element"></div>
       <div id="disk-container" class="disk-grid"></div>
 
-      <div
-        id="raid-form"
-        class="btrfs-card raid-form-card hidden-element"
-      >
+      <div id="raid-form" class="btrfs-card raid-form-card hidden-element">
         <h3>Create New Storage Pool</h3>
         <div class="form-group">
           <p class="form-label-block">1. Select Drives to Include:</p>
-          <div id="available-disks" class="available-disks-box">
-            Scanning for available drives...
-          </div>
+          <div id="available-disks" class="available-disks-box">Scanning for available drives...</div>
         </div>
         <div class="form-group">
           <p class="form-label-block">2. Data Protection Level:</p>
@@ -52,9 +47,7 @@
             <option value="dup">DUP (1 Drive - Duplicate safety copy on same drive)</option>
             <option value="raid1">RAID 1 Mirror (Min 2 Drives - Mirrored copy for safety)</option>
             <option value="raid0">RAID 0 Stripe (Min 2 Drives - Maximum speed, no backup)</option>
-            <option value="raid10">
-              RAID 10 (Min 4 Drives - High speed and mirrored safety)
-            </option>
+            <option value="raid10">RAID 10 (Min 4 Drives - High speed and mirrored safety)</option>
           </select>
         </div>
         <div class="form-group">
@@ -74,20 +67,11 @@
         <div class="form-group">
           <p class="form-label-block">4. Pool Name:</p>
           <label for="volume-label" class="form-label">Pool Name:</label>
-          <input
-            type="text"
-            id="volume-label"
-            class="form-input"
-            placeholder="e.g., DataPool"
-          />
+          <input type="text" id="volume-label" class="form-input" placeholder="e.g., DataPool" />
         </div>
         <div class="form-actions">
-          <button class="btn btn-primary" id="btn-execute-format">
-            Format Drives & Create Pool
-          </button>
-          <button class="btn btn-secondary" id="btn-cancel-format">
-            Cancel
-          </button>
+          <button class="btn btn-primary" id="btn-execute-format">Format Drives &amp; Create Pool</button>
+          <button class="btn btn-secondary" id="btn-cancel-format">Cancel</button>
         </div>
         <p id="format-status" class="status-console hidden-element mt-15"></p>
       </div>
@@ -121,16 +105,11 @@
           <select id="modal-disk-select" class="form-input w-100"></select>
         </div>
         <div class="warning-box mb-15 text-danger">
-          <strong>Warning:</strong> All files and partitions on the
-          selected drive will be permanently erased!
+          <strong>Warning:</strong> All files and partitions on the selected drive will be permanently erased!
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" id="btn-close-add-modal">
-            Cancel
-          </button>
-          <button class="btn btn-primary" id="btn-confirm-add-dev" disabled>
-            Add Drive
-          </button>
+          <button class="btn btn-secondary" id="btn-close-add-modal">Cancel</button>
+          <button class="btn btn-primary" id="btn-confirm-add-dev" disabled>Add Drive</button>
         </div>
       </div>
     </div>
@@ -163,12 +142,8 @@
           />
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" id="btn-cancel-destroy-vol">
-            Cancel
-          </button>
-          <button class="btn btn-danger" id="btn-execute-destroy-vol" disabled>
-            Permanently Delete Pool
-          </button>
+          <button class="btn btn-secondary" id="btn-cancel-destroy-vol">Cancel</button>
+          <button class="btn btn-danger" id="btn-execute-destroy-vol" disabled>Permanently Delete Pool</button>
         </div>
       </div>
     </div>
@@ -177,28 +152,15 @@
       <div class="modal-content">
         <h3 id="generic-modal-title">Title</h3>
         <p id="generic-modal-message" class="mb-15"></p>
-        <div
-          id="generic-modal-input-container"
-          class="form-group hidden-element mb-15"
-        >
-          <input
-            type="text"
-            id="generic-modal-input"
-            class="form-input w-100"
-          />
-          <select
-            id="generic-modal-select"
-            class="form-input w-100 hidden-element"
-          ></select>
+        <div id="generic-modal-input-container" class="form-group hidden-element mb-15">
+          <input type="text" id="generic-modal-input" class="form-input w-100" />
+          <select id="generic-modal-select" class="form-input w-100 hidden-element"></select>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" id="generic-modal-cancel">
-            Cancel
-          </button>
+          <button class="btn btn-secondary" id="generic-modal-cancel">Cancel</button>
           <button class="btn btn-primary" id="generic-modal-confirm">OK</button>
         </div>
       </div>
     </div>
-
   </body>
 </html>

@@ -1,22 +1,22 @@
 # BTRFS Manager for Cockpit
 
 ## Project Details
-BTRFS Manager is a lightweight, native web interface extension for the Cockpit Project. It is designed to provide comprehensive management of BTRFS filesystems directly from your web browser. 
+BTRFS Manager is a lightweight, native web interface extension for the Cockpit Project. It is designed to provide comprehensive management of BTRFS filesystems directly from your web browser.
 
-Built entirely with Vanilla JavaScript, HTML, and custom CSS, this extension closely mimics the native PatternFly design system utilized by Cockpit—including automatic Dark Mode support—without requiring complex build tools, Node.js, or NPM. 
+Built entirely with Vanilla JavaScript, HTML, and custom CSS, this extension closely mimics the native PatternFly design system utilized by Cockpit—including Light and Dark theme support—without requiring complex build tools, Node.js, or NPM.
 
 By leveraging Cockpit's native `spawn` API, the extension communicates directly with the system's command-line utilities. This ensures maximum portability, zero backend daemon requirements, and immediate execution of advanced filesystem commands.
 
 ### Core Features
-* Master-Detail Dashboard: A responsive grid layout that provides a high-level overview of all BTRFS volumes, with dedicated detail pages for advanced management.
-* Volume & RAID Creation: Format empty block devices into new BTRFS volumes with support for Single, DUP, RAID 0, RAID 1, and RAID 10 profiles, with strict safety checks for unallocated disks.
-* Volume Deletion & Teardown: Safely destroy non-root BTRFS pools with automated unmounting, full Snapper/Cron snapshot schedule purge, and disk signature wipe (`wipefs`).
-* Orphaned Snapshot Cleaner: Automatically detects broken or stale Snapper configs pointing to removed drives and provides 1-click cleanup to prevent systemwide snapshot failures.
-* Physical Device Management: View physical device topology, add new blank disks online, remove disks, and easily evacuate disconnected/failed drives with missing-device recovery.
-* Device Health & Diagnostics: Real-time monitoring of disk I/O and checksum corruption counters (`btrfs device stats`) to catch failing hardware before data loss occurs.
-* Subvolumes & Snapshots: Create and delete subvolumes with granular controls (CoW toggle, Read-Only locking, defragmentation). Take instant snapshots, restore/clone them to read-write subvolumes, or rollback the default mount.
-* Storage Breakdown & Features: Visual progress bars for Data and Metadata chunk allocation with usage warnings, alongside auto-detection of compression algorithms (`zstd`, `lzo`) and mount features.
-* Maintenance & Optimization: Non-blocking background scrub and balance with live terminal tracking, multi-volume concurrency, and targeted subvolume defragmentation.
+* **Master-Detail Dashboard**: A responsive grid layout providing a high-level overview of all BTRFS storage pools, with dedicated detail views for topology, subvolume, snapshot, and maintenance operations.
+* **Pool & RAID Creation**: Format empty block devices into new BTRFS storage pools with independent Data and Metadata protection profiles (`Single`, `DUP`, `RAID 0`, `RAID 1`, `RAID 10`) and strict safety checks for unallocated disks.
+* **Pool Deletion & Teardown**: Safely destroy non-root BTRFS pools with automated unmounting, Snapper/Cron backup schedule cleanup, `/etc/fstab` warnings, and disk signature wiping (`wipefs`).
+* **Stale Backup Schedule Cleaner**: Automatically detects orphaned Snapper configurations pointing to removed drives or deleted subvolumes and provides 1-click cleanup.
+* **Physical Device & Protection Management**: View physical device topology, add new empty drives online, remove drives, evacuate missing drives from degraded pools, and convert Data or Metadata RAID profiles online (including 1-click Metadata `SINGLE` to `DUP` upgrade).
+* **Drive Health & Diagnostics**: Real-time monitoring of disk I/O and checksum corruption counters (`btrfs device stats`) to detect failing hardware early.
+* **Subvolumes & Snapshots**: Create subvolumes (including nested paths), toggle Copy-on-Write (`+CoW` / `NoCoW`), and delete unused subvolumes with built-in protection for active mounts and `/etc/fstab` entries. Take instant snapshots, lock/unlock snapshots (`Read-Only` / `Writable`), restore snapshots into new writable subvolumes, and configure automated Cron + Snapper retention schedules (`Hourly`, `Daily`, `Weekly`).
+* **Storage Breakdown & Active Features**: Visual progress bars for Data and Metadata chunk allocations with usage thresholds, alongside auto-detection of active mount options (`compress`, `space_cache`, `discard`, `ssd`, `autodefrag`).
+* **Optimization & Maintenance**: Non-blocking background scrub (`Verify & Repair`) and balance (`Optimize Space`) with live terminal tracking, multi-pool concurrency, recursive defragmentation, and on-demand drive diagnostics.
 
 ## Supported Linux Ecosystems
 Official compatibility is guaranteed for the following Linux distributions and their derivatives:
@@ -57,8 +57,9 @@ git clone https://github.com/NGxID18/btrfs-manager ~/.local/share/cockpit/btrfs-
 After installation, log in to Cockpit (`https://<server-ip>:9090`) and select **BTRFS** from the sidebar.
 
 ## Usage Notes
-* **Master View**: Provides a dashboard grid of all detected BTRFS pools, showing raw size, usable space, active RAID profiles, and snapshot schedules.
-* **Detail View**: Click "Manage Volume" on any volume card to access device topology, subvolume tree, snapshot history, and maintenance controls.
-* **Device Selection**: Only unallocated disks without existing filesystems or active mount points are shown when creating volumes or adding disks.
-* **System Root Protection**: The operating system root pool (`/`) cannot be destroyed or wiped from the UI.
-* **Rollbacks**: To rollback to a snapshot, click **Set as Default Mount** on the target snapshot subvolume.
+* **Master View**: Displays a dashboard grid of all detected BTRFS storage pools, showing raw capacity, usable space, Data/Metadata profiles, chunk allocation bars, and automated backup status.
+* **Detail View**: Click **Manage Storage Pool** on any pool card to manage member drives, protection profiles, subvolumes, snapshots, and maintenance tasks.
+* **Mounting Pools**: Mounting and `/etc/fstab` configuration are intentionally handled by Cockpit's native **Storage** (`cockpit-storaged`) module to avoid service conflicts.
+* **Device Selection**: Only unallocated drives/partitions (>= 256 MiB) without existing filesystems or active mount points are listed when creating pools or adding drives.
+* **System Root Protection**: The operating system root pool (`/`) and actively mounted or `/etc/fstab`-referenced subvolumes are protected from deletion in the UI.
+* **Restoring Snapshots**: To restore a snapshot, click **Restore** on the target snapshot row to clone it into a new writable subvolume.
