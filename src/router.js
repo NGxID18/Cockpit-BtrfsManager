@@ -1483,11 +1483,15 @@ if [ -n "$MNT" ] && [ "$MNT" != "/" ] && awk -v m="$MNT" '!/^[[:space:]]*#/ && $
       () => {
         customAlert("Updating Extension", "Downloading latest release from GitHub repository...");
         const updateScript = `
-TARGET_DIR="/usr/share/cockpit/btrfs-manager"
+TARGET_DIR="/usr/share/cockpit/btrfsmanager"
 if [ ! -d "$TARGET_DIR" ]; then
-  for d in /home/*/.local/share/cockpit/btrfs-manager; do
-    [ -d "$d" ] && { TARGET_DIR="$d"; break; }
-  done
+  if [ -d "/usr/share/cockpit/btrfs-manager" ]; then
+    TARGET_DIR="/usr/share/cockpit/btrfs-manager"
+  else
+    for d in /home/*/.local/share/cockpit/btrfsmanager /home/*/.local/share/cockpit/btrfs-manager; do
+      [ -d "$d" ] && { TARGET_DIR="$d"; break; }
+    done
+  fi
 fi
 
 if [ -d "$TARGET_DIR/.git" ]; then
@@ -1498,7 +1502,7 @@ if [ -d "$TARGET_DIR/.git" ]; then
 else
   TMP_DIR=$(mktemp -d)
   trap 'rm -rf "$TMP_DIR"' EXIT
-  git clone --depth 1 https://github.com/NGxID18/btrfs-manager "$TMP_DIR" 2>&1
+  git clone --depth 1 https://github.com/NGxID18/Cockpit-BtrfsManager "$TMP_DIR" 2>&1
   cp -rf "$TMP_DIR"/. "$TARGET_DIR"/
 fi
 

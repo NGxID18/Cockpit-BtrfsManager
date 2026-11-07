@@ -1,10 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # BTRFS Manager for Cockpit - Automated Installer & Manager
-# Repository : https://github.com/NGxID18/btrfs-manager
+# Repository : https://github.com/NGxID18/Cockpit-BtrfsManager
 # Supported  : Debian/Ubuntu (apt), RHEL/Fedora (dnf), Arch Linux (pacman), openSUSE (zypper)
-# Usage      : curl -sSL https://raw.githubusercontent.com/NGxID18/btrfs-manager/main/install.sh | sudo bash
-#              wget -qO- https://raw.githubusercontent.com/NGxID18/btrfs-manager/main/install.sh | sudo bash
+# Usage      : curl -sSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
+#              wget -qO- https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
 # Uninstall  : sudo bash install.sh --uninstall
 # ==============================================================================
 
@@ -19,8 +19,8 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-REPO_URL="https://github.com/NGxID18/btrfs-manager.git"
-TARGET_DIR="/usr/share/cockpit/btrfs-manager"
+REPO_URL="https://github.com/NGxID18/Cockpit-BtrfsManager.git"
+TARGET_DIR="/usr/share/cockpit/btrfsmanager"
 
 # ------------------------------------------------------------------------------
 # 1. Root Privilege Check
@@ -28,7 +28,7 @@ TARGET_DIR="/usr/share/cockpit/btrfs-manager"
 if [ "$(id -u)" -ne 0 ]; then
     echo -e "${RED}[ERROR] This script must be run as root (or with sudo).${NC}"
     echo -e "Please run:"
-    echo -e "  ${YELLOW}curl -sSL https://raw.githubusercontent.com/NGxID18/btrfs-manager/main/install.sh | sudo bash${NC}"
+    echo -e "  ${YELLOW}curl -sSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash${NC}"
     exit 1
 fi
 
@@ -42,6 +42,8 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ]; then
     echo ""
     echo -e "${YELLOW}Removing BTRFS Manager extension from ${TARGET_DIR}...${NC}"
     rm -rf "$TARGET_DIR"
+    # Also remove legacy path if present
+    rm -rf "/usr/share/cockpit/btrfs-manager"
 
     # Remove any cron scripts created by the extension
     echo -e "${YELLOW}Cleaning up automated backup cron jobs...${NC}"
@@ -323,6 +325,6 @@ echo -e "  2. Log in with your Linux credentials."
 echo -e "  3. Click ${CYAN}BTRFS Manager${NC} in the left sidebar."
 echo ""
 echo -e "  To uninstall in the future:"
-echo -e "    ${YELLOW}sudo /usr/share/cockpit/btrfs-manager/install.sh --uninstall${NC}"
-echo -e "${GREEN}======================================================================${NC}"
+echo -e "    \${YELLOW}sudo \${TARGET_DIR}/install.sh --uninstall\${NC}"
+echo -e "\${GREEN}======================================================================\${NC}"
 

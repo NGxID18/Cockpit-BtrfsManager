@@ -38,12 +38,12 @@ Run either of the following commands as root. The script will automatically dete
 
 ### Using curl:
 ```bash
-curl -sSL https://raw.githubusercontent.com/NGxID18/btrfs-manager/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
 ```
 
 ### Using wget:
 ```bash
-wget -qO- https://raw.githubusercontent.com/NGxID18/btrfs-manager/main/install.sh | sudo bash
+wget -qO- https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
 ```
 
 Once installed, open your browser at `https://<server-ip>:9090`, log in, and click **BTRFS Manager** in the left sidebar.
@@ -55,7 +55,7 @@ Once installed, open your browser at `https://<server-ip>:9090`, log in, and cli
 To remove BTRFS Manager and clean up scheduled backup jobs:
 
 ```bash
-sudo /usr/share/cockpit/btrfs-manager/install.sh --uninstall
+sudo /usr/share/cockpit/btrfsmanager/install.sh --uninstall
 ```
 
 ---
