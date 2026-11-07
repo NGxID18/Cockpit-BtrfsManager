@@ -1,30 +1,39 @@
+/**
+ * BTRFS Manager - Core Engine & State Controller
+ * Handles topology discovery, storage parsing, metrics collection, and DOM rendering.
+ */
+
+/**
+ * Parses raw "btrfs filesystem df" output to calculate allocation percentages and total/used sizes.
+ */
 const parseChunkAlloc = (dfText, type) => {
-  const re = new RegExp(`${type},\\s*([^:]+):\\s*total=([^,]+),\\s*used=([^\\n]+)`, "gi");
-  const matches = [...dfText.matchAll(re)];
+  const regex = new RegExp(`${type},\\s*([^:]+):\\s*total=([^,]+),\\s*used=([^\\n]+)`, "gi");
+  const matches = [...dfText.matchAll(regex)];
   if (!matches.length) return null;
 
-  let totalB = 0;
-  let usedB = 0;
-  let mainProf = matches[0][1].trim().toUpperCase();
-  let maxB = -1;
+  let totalBytes = 0;
+  let usedBytes = 0;
+  let dominantProfile = matches[0][1].trim().toUpperCase();
+  let maxAllocated = -1;
 
-  for (const m of matches) {
-    const tB = parseSize(m[2].trim());
-    const uB = parseSize(m[3].trim());
-    totalB += tB;
-    usedB += uB;
-    if (tB > maxB) {
-      maxB = tB;
-      mainProf = m[1].trim().toUpperCase();
+  for (const match of matches) {
+    const tBytes = parseSize(match[2].trim());
+    const uBytes = parseSize(match[3].trim());
+    totalBytes += tBytes;
+    usedBytes += uBytes;
+
+    if (tBytes > maxAllocated) {
+      maxAllocated = tBytes;
+      dominantProfile = match[1].trim().toUpperCase();
     }
   }
 
-  const pct = totalB > 0 ? Math.min(100, Math.round((usedB / totalB) * 100)) : 0;
+  const percentUsed = totalBytes > 0 ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0;
   return {
-    profile: mainProf,
-    totalStr: matches.length === 1 ? matches[0][2].trim() : formatSize(totalB),
-    usedStr: matches.length === 1 ? matches[0][3].trim() : formatSize(usedB),
-    pct,
+    profile: dominantProfile,
+    totalStr: matches.length === 1 ? matches[0][2].trim() : formatSize(totalBytes),
+    usedStr: matches.length === 1 ? matches[0][3].trim() : formatSize(usedBytes),
+    pct: percentUsed,
   };
 };
 
@@ -36,68 +45,83 @@ window.App = {
   hasSnapper: false,
   orphanedSnaps: [],
 
+  /**
+   * Scans system storage topology, block devices, active mount points, and Snapper status.
+   */
   async fetch() {
-    if (
-      $("view-master") &&
-      !$("view-master").classList.contains("hidden-element") &&
-      $("disk-container")
-    ) {
-      $("disk-container").innerHTML =
-        "<p class='loading-text'>Scanning BTRFS &amp; Hardware Topologies...</p>";
+    const masterView = $("view-master");
+    const diskContainer = $("disk-container");
+
+    if (masterView && !masterView.classList.contains("hidden-element") && diskContainer) {
+      diskContainer.innerHTML = "<p class='loading-text'>Scanning BTRFS &amp; Hardware Topologies...</p>";
     }
+
     try {
-      const [btrfsOut, mntOut, lsblkOut, snapperCheck] = await Promise.all([
+      const [btrfsOut, mntOut, lsblkOut, snapperCheck, rootDeviceOut] = await Promise.all([
         cmd(["btrfs", "filesystem", "show"]),
         cmd(["findmnt", "-A", "-J", "-t", "btrfs"]).catch(() => "{}"),
         cmd(["lsblk", "-J", "-o", "NAME,PATH,MODEL,VENDOR,TYPE"]).catch(() => "{}"),
-        cmd(["sh", "-c", "command -v snapper >/dev/null 2>&1 && echo yes || echo no"]).catch(
-          () => "no",
-        ),
+        cmd(["sh", "-c", "command -v snapper >/dev/null 2>&1 && echo yes || echo no"]).catch(() => "no"),
+        cmd(["findmnt", "-n", "-o", "SOURCE", "-T", "/"]).catch(() => ""),
       ]);
-      this.hasSnapper = (snapperCheck || "").trim() === "yes";
 
+      this.hasSnapper = (snapperCheck || "").trim() === "yes";
       this.mnt = {};
       this.rootDevs = new Set();
-      const walkMnt = (nodes) =>
-        nodes.forEach((n) => {
-          if (n.source && n.target) {
-            const baseDev = n.source.split("[")[0];
-            if (n.target === "/") this.rootDevs.add(baseDev);
-            if (!this.mnt[baseDev] || n.target.length < this.mnt[baseDev].length) {
-              this.mnt[baseDev] = n.target;
-            }
-            this.mnt[n.source] = n.target;
-          }
-          if (n.children) walkMnt(n.children);
-        });
-      walkMnt(JSON.parse(mntOut).filesystems || []);
 
-      this.hw = {};
-      const walkHw = (nodes, parentModel) =>
-        nodes.forEach((n) => {
-          const model = [n.vendor, n.model].filter(Boolean).join(" ").trim() || parentModel;
-          if (n.path) this.hw[n.path] = model || "Generic Storage";
-          if (n.children) walkHw(n.children, model);
+      // Reliable detection of host root disk (preserves OS pool from accidental deletion)
+      const cleanRootDev = (rootDeviceOut || "").trim().split("[")[0];
+      if (cleanRootDev) this.rootDevs.add(cleanRootDev);
+
+      // Map active BTRFS mounts
+      const walkMounts = (nodes) => {
+        nodes.forEach((node) => {
+          if (node.source && node.target) {
+            const baseDev = node.source.split("[")[0];
+            if (node.target === "/" || node.target === "/sysroot") {
+              this.rootDevs.add(baseDev);
+            }
+            if (!this.mnt[baseDev] || node.target.length < this.mnt[baseDev].length) {
+              this.mnt[baseDev] = node.target;
+            }
+            this.mnt[node.source] = node.target;
+          }
+          if (node.children) walkMounts(node.children);
         });
+      };
+      walkMounts(JSON.parse(mntOut).filesystems || []);
+
+      // Map hardware device model names
+      this.hw = {};
+      const walkHw = (nodes, parentModel) => {
+        nodes.forEach((node) => {
+          const model = [node.vendor, node.model].filter(Boolean).join(" ").trim() || parentModel;
+          if (node.path) this.hw[node.path] = model || "Generic Storage";
+          if (node.children) walkHw(node.children, model);
+        });
+      };
       walkHw(JSON.parse(lsblkOut).blockdevices || []);
 
       await this.parseBtrfs(btrfsOut);
     } catch (err) {
-      if ($("disk-container")) {
-        $("disk-container").innerHTML = `<p class="text-danger mt-15">Critical Fetch Error: ${escapeHtml(err.message)}</p>`;
+      if (diskContainer) {
+        diskContainer.innerHTML = `<p class="text-danger mt-15">Scan Error: ${escapeHtml(err.message)}</p>`;
       }
     }
   },
 
-  async parseBtrfs(out) {
-    this.vols = out
+  /**
+   * Parses output from "btrfs filesystem show" into structured storage pool models.
+   */
+  async parseBtrfs(output) {
+    this.vols = output
       .split(/Label:\s+/i)
-      .filter((b) => b.trim() !== "")
+      .filter((block) => block.trim() !== "" && /uuid:\s+[a-f0-9-]+/i.test(block))
       .map((block, idx) => {
-        const mLabel = block.match(/^(?:'([^']*)'|(\S+))?\s+uuid:\s+([a-f0-9-]+)/i);
-        const uuid = mLabel ? mLabel[3] : "Unknown";
-        const mPath = block.match(/path\s+(\/dev\/\S+)/i);
-        const rootPath = mPath ? mPath[1] : "";
+        const labelMatch = block.match(/^(?:'([^']*)'|(\S+))?\s+uuid:\s+([a-f0-9-]+)/i);
+        const uuid = labelMatch ? labelMatch[3] : "Unknown";
+        const pathMatch = block.match(/path\s+(\/dev\/\S+)/i);
+        const rootPath = pathMatch ? pathMatch[1] : "";
         const blockHasMissing = /\*\*\*\s*Some devices missing/i.test(block);
 
         const devs = [];
@@ -105,11 +129,12 @@ window.App = {
           if (/devid/i.test(line) && (/path/i.test(line) || /MISSING/i.test(line))) {
             const idMatch = line.match(/devid\s+(\d+)/i);
             const sizeMatch = line.match(/size\s+([0-9.]+(?:[a-zA-Z]+)?)/i);
-            const pathMatch = line.match(/path\s+(\S+)/i);
+            const devPathMatch = line.match(/path\s+(\S+)/i);
             const isMissing = /\bMISSING\b/i.test(line);
-            if (idMatch && (pathMatch || isMissing)) {
+
+            if (idMatch && (devPathMatch || isMissing)) {
               const devPath =
-                pathMatch && pathMatch[1] !== "MISSING" ? pathMatch[1] : "MISSING";
+                devPathMatch && devPathMatch[1] !== "MISSING" ? devPathMatch[1] : "MISSING";
               devs.push({
                 id: idMatch[1],
                 size: sizeMatch ? sizeMatch[1] : "0",
@@ -120,6 +145,7 @@ window.App = {
           }
         });
 
+        // Determine mount point
         let mountPoint = (rootPath && this.mnt[rootPath]) || "";
         if (!mountPoint) {
           for (const d of devs) {
@@ -133,14 +159,16 @@ window.App = {
         const rawSize = formatSize(devs.reduce((sum, d) => sum + parseSize(d.size), 0));
         const hwList =
           [...new Set(devs.map((d) => this.hw[d.path]))].filter(Boolean).join(" & ") ||
-          "Unknown Device Hardware";
+          "Standard Storage Device";
+
+        const poolLabel =
+          labelMatch && (labelMatch[1] || labelMatch[2]) !== "none"
+            ? labelMatch[1] || labelMatch[2]
+            : `Storage Pool (${uuid.slice(0, 8)})`;
 
         return {
           idx,
-          label:
-            mLabel && (mLabel[1] || mLabel[2]) !== "none"
-              ? mLabel[1] || mLabel[2]
-              : `Storage Pool (${uuid.slice(0, 8)})`,
+          label: poolLabel,
           uuid,
           mountPoint,
           devs,
@@ -160,25 +188,26 @@ window.App = {
       });
 
     this.renderMaster();
+
+    // Preserve active detail view if user was viewing a pool
     const activeIdx = $("detail-container")?.getAttribute("data-active-index");
-    if (
-      activeIdx !== null &&
-      activeIdx !== "" &&
-      $("view-detail") &&
-      !$("view-detail").classList.contains("hidden-element")
-    ) {
-      const v = this.vols.find((vol) => vol.idx == activeIdx);
-      if (v) {
-        this.updateUI(v);
+    if (activeIdx !== null && activeIdx !== "" && !$("view-detail")?.classList.contains("hidden-element")) {
+      const activeVol = this.vols.find((v) => v.idx == activeIdx);
+      if (activeVol) {
+        this.updateUI(activeVol);
       } else {
         $("view-detail").classList.add("hidden-element");
         $("view-master").classList.remove("hidden-element");
         $("detail-container").setAttribute("data-active-index", "");
       }
     }
+
     await this.fetchDynamicMetrics();
   },
 
+  /**
+   * Scans for orphaned Snapper configs pointing to deleted folders or drives.
+   */
   async checkOrphanedSnapshots() {
     try {
       const script = `
@@ -204,9 +233,9 @@ fi
       this.orphanedSnaps = out
         .trim()
         .split("\n")
-        .filter((l) => l.trim().includes("|"))
-        .map((l) => {
-          const [cfg, subvol] = l.split("|");
+        .filter((line) => line.trim().includes("|"))
+        .map((line) => {
+          const [cfg, subvol] = line.split("|");
           return { cfg: cfg.trim(), subvol: (subvol || "").trim() };
         });
     } catch {
@@ -215,21 +244,27 @@ fi
     this.renderOrphanBanner();
   },
 
+  /**
+   * Displays banner warning when stale/orphaned backup schedules are detected.
+   */
   renderOrphanBanner() {
     const el = $("orphan-snap-container");
     if (!el) return;
+
     if (!this.orphanedSnaps?.length) {
       el.classList.add("hidden-element");
       el.innerHTML = "";
       return;
     }
+
     const count = this.orphanedSnaps.length;
     const itemsHtml = this.orphanedSnaps
       .map(
         (o) =>
-          `<li><strong>${escapeHtml(o.cfg)}</strong> (Target folder: <span class="btrfs-code">${escapeHtml(o.subvol || "Missing")}</span>)</li>`,
+          `<li><strong>${escapeHtml(o.cfg)}</strong> (Target: <span class="btrfs-code">${escapeHtml(o.subvol || "Missing")}</span>)</li>`,
       )
       .join("");
+
     el.innerHTML = `
       <div class="orphan-snap-content">
         <div class="orphan-snap-title">
@@ -237,7 +272,7 @@ fi
           <span class="orphan-badge">${count} Stale ${count === 1 ? "Schedule" : "Schedules"}</span>
         </div>
         <div class="orphan-snap-desc">
-          The following automatic backup schedules point to folders or drives that no longer exist. Removing them will prevent backup errors and keep other backups running normally:
+          The following automatic backup schedules point to folders or drives that no longer exist. Removing them will prevent backup errors:
         </div>
         <ul class="danger-list orphan-item-list">${itemsHtml}</ul>
       </div>
@@ -248,6 +283,9 @@ fi
     el.classList.remove("hidden-element");
   },
 
+  /**
+   * Fetches real-time space usage, active mount options, device corruption stats, and backup status.
+   */
   async fetchDynamicMetrics() {
     const snapScript = `
 MNT="$1"
@@ -275,23 +313,11 @@ if [ -n "$CRON" ]; then
   if [ -z "$LIM" ] && [ -n "$CFG" ] && [ "$CFG" != "Config" ] && command -v snapper >/dev/null 2>&1; then
     LIM=$(snapper -c "$CFG" get-config 2>/dev/null | awk '$1=="NUMBER_LIMIT"{print $3}')
   fi
-  if [ -n "$LIM" ]; then
-    STATUS="$FRQ (Keeps up to $LIM backups)"
-  else
-    STATUS="$FRQ (Automated)"
-  fi
+  STATUS="$FRQ (\${LIM:-5} backups kept)"
 elif [ -n "$CFG" ] && [ "$CFG" != "Config" ] && command -v snapper >/dev/null 2>&1; then
   IS_ON=$(snapper -c "$CFG" get-config 2>/dev/null | awk '$1=="TIMELINE_CREATE"{print $3}')
   if [ "$IS_ON" = "yes" ]; then
-    H=$(snapper -c "$CFG" get-config 2>/dev/null | awk '$1=="TIMELINE_LIMIT_HOURLY"{print $3}')
-    D=$(snapper -c "$CFG" get-config 2>/dev/null | awk '$1=="TIMELINE_LIMIT_DAILY"{print $3}')
-    W=$(snapper -c "$CFG" get-config 2>/dev/null | awk '$1=="TIMELINE_LIMIT_WEEKLY"{print $3}')
-    M=$(snapper -c "$CFG" get-config 2>/dev/null | awk '$1=="TIMELINE_LIMIT_MONTHLY"{print $3}')
-    if [ -n "$H" ] && [ "$H" != "0" ]; then STATUS="Hourly (Keeps up to $H backups)"
-    elif [ -n "$D" ] && [ "$D" != "0" ]; then STATUS="Daily (Keeps up to $D backups)"
-    elif [ -n "$W" ] && [ "$W" != "0" ]; then STATUS="Weekly (Keeps up to $W backups)"
-    elif [ -n "$M" ] && [ "$M" != "0" ]; then STATUS="Monthly (Keeps up to $M backups)"
-    else STATUS="Enabled (Active)"; fi
+    STATUS="Enabled (Active)"
   fi
 fi
 echo "$STATUS"
@@ -307,6 +333,7 @@ echo "$STATUS"
           this.updateUI(v);
           return;
         }
+
         try {
           const [dfOut, hOut, snapOut, optsOut, statsOut] = await Promise.all([
             cmd(["btrfs", "filesystem", "df", v.mountPoint]),
@@ -316,26 +343,28 @@ echo "$STATUS"
             cmd(["btrfs", "device", "stats", v.mountPoint]).catch(() => ""),
           ]);
 
+          // Parse mount options
           if (optsOut) {
             const rawOpts = optsOut.trim().split(",");
-            const importantOpts = [];
+            const highlightedOpts = [];
             ["compress", "space_cache", "discard"].forEach((prefix) => {
               const found = rawOpts.find((o) => o.startsWith(prefix));
-              if (found) importantOpts.push(found);
+              if (found) highlightedOpts.push(found);
             });
-            if (rawOpts.includes("ro")) importantOpts.push("read-only");
-            if (rawOpts.includes("ssd")) importantOpts.push("ssd");
-            if (rawOpts.includes("autodefrag")) importantOpts.push("autodefrag");
+            if (rawOpts.includes("ro")) highlightedOpts.push("read-only");
+            if (rawOpts.includes("ssd")) highlightedOpts.push("ssd");
+            if (rawOpts.includes("autodefrag")) highlightedOpts.push("autodefrag");
 
-            v.mountOptsHtml = importantOpts.length
-              ? importantOpts
-                  .map((o) => `<span class="mount-opt-tag">${escapeHtml(o)}</span>`)
+            v.mountOptsHtml = highlightedOpts.length
+              ? highlightedOpts
+                  .map((opt) => `<span class="mount-opt-tag">${escapeHtml(opt)}</span>`)
                   .join(" ")
-              : '<span class="text-muted">Standard BTRFS options</span>';
+              : '<span class="text-muted">Standard options</span>';
           } else {
             v.mountOptsHtml = '<span class="text-muted">Default</span>';
           }
 
+          // Parse drive corruption statistics
           let totalDevErrors = 0;
           const devErrors = {};
           if (statsOut) {
@@ -343,10 +372,10 @@ echo "$STATUS"
               .trim()
               .split("\n")
               .forEach((line) => {
-                const m = line.match(/\[([^\]]+)\]\.(\w+)\s+(\d+)/);
-                if (m) {
-                  const devPath = m[1];
-                  const count = parseInt(m[3], 10) || 0;
+                const match = line.match(/\[([^\]]+)\]\.(\w+)\s+(\d+)/);
+                if (match) {
+                  const devPath = match[1];
+                  const count = parseInt(match[3], 10) || 0;
                   devErrors[devPath] = (devErrors[devPath] || 0) + count;
                   totalDevErrors += count;
                 }
@@ -359,23 +388,21 @@ echo "$STATUS"
               ? `<span class="text-danger fw-bold">⚠️ ${totalDevErrors} Disk Error(s) Detected!</span>`
               : `<span class="text-success fw-bold">✓ Healthy (No Errors)</span>`;
 
+          // Chunk allocations
           v.dataAlloc = parseChunkAlloc(dfOut, "Data");
           v.metaAlloc = parseChunkAlloc(dfOut, "Metadata");
 
-          const dProf = v.dataAlloc
-            ? v.dataAlloc.profile
-            : dfOut.match(/Data,\s*(.*?):/i)?.[1]?.toUpperCase() || "SINGLE";
-          const mProf = v.metaAlloc
-            ? v.metaAlloc.profile
-            : dfOut.match(/Metadata,\s*(.*?):/i)?.[1]?.toUpperCase() || "DUP";
-          v.raid = `<span class="btrfs-code">Data: ${escapeHtml(dProf)}</span> <span class="btrfs-code">Meta: ${escapeHtml(mProf)}</span>`;
+          const dataProfile = v.dataAlloc?.profile || dfOut.match(/Data,\s*(.*?):/i)?.[1]?.toUpperCase() || "SINGLE";
+          const metaProfile = v.metaAlloc?.profile || dfOut.match(/Metadata,\s*(.*?):/i)?.[1]?.toUpperCase() || "DUP";
+          v.raid = `<span class="btrfs-code">Data: ${escapeHtml(dataProfile)}</span> <span class="btrfs-code">Meta: ${escapeHtml(metaProfile)}</span>`;
 
+          // Usable vs Raw size
           const dfLines = hOut.trim().split("\n");
           if (dfLines.length > 1) {
             const cols = dfLines[1].trim().split(/\s+/);
-            const totalB = parseInt(cols[0], 10) || 0;
-            const availB = parseInt(cols[1], 10) || 0;
-            v.usable = `${formatSize(availB)} free of ${formatSize(totalB)}`;
+            const totalBytes = parseInt(cols[0], 10) || 0;
+            const availBytes = parseInt(cols[1], 10) || 0;
+            v.usable = `${formatSize(availBytes)} free of ${formatSize(totalBytes)}`;
           } else {
             v.usable = "Unknown";
           }
@@ -386,25 +413,29 @@ echo "$STATUS"
           v.usable = "Error";
           v.snapStatus = "Error";
         }
+
         this.updateUI(v);
       }),
     ]);
   },
 
+  /**
+   * Renders visual allocation progress bars for Data and Metadata chunks.
+   */
   renderAllocBars(v, isDetail = false) {
     if (!v.mountPoint || !v.dataAlloc || !v.metaAlloc) return "";
     const d = v.dataAlloc;
     const m = v.metaAlloc;
+
     const dataClass = d.pct >= 90 ? "danger" : d.pct >= 75 ? "warn" : "data";
     const metaClass = m.pct >= 85 ? "danger" : m.pct >= 70 ? "warn" : "meta";
 
     return `
       <div class="${isDetail ? "alloc-section mb-15" : "alloc-section mt-10 mb-15"}">
-        ${
-          isDetail
-            ? '<div class="alloc-section-title"><span>Storage Chunk Allocation</span><span class="text-muted text-sm">Raw chunks allocated by BTRFS</span></div>'
-            : '<div class="alloc-section-title"><span>Chunk Allocation</span></div>'
-        }
+        <div class="alloc-section-title">
+          <span>${isDetail ? "Storage Chunk Allocation" : "Chunk Allocation"}</span>
+          ${isDetail ? '<span class="text-muted text-sm">Raw BTRFS chunks</span>' : ""}
+        </div>
         <div class="alloc-bar-group">
           <div class="alloc-bar-header">
             <span class="alloc-bar-title">Data <span class="btrfs-code">${escapeHtml(d.profile)}</span></span>
@@ -418,7 +449,7 @@ echo "$STATUS"
           <div class="alloc-bar-header">
             <span class="alloc-bar-title">Metadata <span class="btrfs-code">${escapeHtml(m.profile)}</span>${
               m.profile === "SINGLE" && v.mountPoint
-                ? ` <button class="btn-xs-tag btn-action" data-action="quick-meta-dup" data-mount="${escapeHtml(v.mountPoint)}" data-index="${v.idx}" title="Upgrade metadata from Single to DUP for corruption protection">Upgrade to DUP</button>`
+                ? ` <button class="btn-xs-tag btn-action" data-action="quick-meta-dup" data-mount="${escapeHtml(v.mountPoint)}" data-index="${v.idx}" title="Upgrade metadata from Single to DUP for corruption safety">Upgrade to DUP</button>`
                 : ""
             }</span>
             <span class="alloc-bar-stats">${escapeHtml(m.usedStr)} / ${escapeHtml(m.totalStr)} (${m.pct}%)</span>
@@ -431,14 +462,15 @@ echo "$STATUS"
     `;
   },
 
+  /**
+   * Refreshes dynamic metric widgets in both Master and Detail views without full DOM re-renders.
+   */
   updateUI(v) {
     if ($(`master-usable-${v.idx}`)) {
       $(`master-usable-${v.idx}`).textContent = v.usable;
       if ($(`master-snap-${v.idx}`)) $(`master-snap-${v.idx}`).textContent = v.snapStatus;
       if ($(`master-raid-${v.idx}`)) $(`master-raid-${v.idx}`).innerHTML = v.raid;
-      if ($(`master-alloc-${v.idx}`)) {
-        $(`master-alloc-${v.idx}`).innerHTML = this.renderAllocBars(v, false);
-      }
+      if ($(`master-alloc-${v.idx}`)) $(`master-alloc-${v.idx}`).innerHTML = this.renderAllocBars(v, false);
     }
     if ($(`raid-display-${v.idx}`)) {
       $(`raid-display-${v.idx}`).innerHTML = v.raid;
@@ -446,79 +478,89 @@ echo "$STATUS"
       if ($(`snap-display-${v.idx}`)) $(`snap-display-${v.idx}`).textContent = v.snapStatus;
       if ($(`health-display-${v.idx}`)) $(`health-display-${v.idx}`).innerHTML = v.healthHtml;
       if ($(`opts-display-${v.idx}`)) $(`opts-display-${v.idx}`).innerHTML = v.mountOptsHtml;
-      if ($(`alloc-display-${v.idx}`)) {
-        $(`alloc-display-${v.idx}`).innerHTML = this.renderAllocBars(v, true);
-      }
+      if ($(`alloc-display-${v.idx}`)) $(`alloc-display-${v.idx}`).innerHTML = this.renderAllocBars(v, true);
     }
   },
 
+  /**
+   * Renders the primary Master Dashboard grid of all detected BTRFS pools.
+   */
   renderMaster() {
     this.renderOrphanBanner();
     const container = $("disk-container");
     if (!container) return;
-    container.innerHTML = this.vols.length
-      ? this.vols
-          .map((v) => {
-            const alertBadge = v.hasMissing
-              ? '<span class="badge-danger">Degraded (Disk Missing)</span>'
-              : v.totalDevErrors > 0
-                ? '<span class="badge-meta-warn">⚠️ IO Errors</span>'
-                : "";
-            return `
-            <div class="btrfs-card hoverable h-100-col">
-              <div class="card-header-clean">
-                <div>
-                  <h3 class="card-title-text">${escapeHtml(v.label)}</h3>
-                  ${alertBadge ? `<div class="mt-5">${alertBadge}</div>` : ""}
-                </div>
-                <div class="card-status-tag">
-                  ${
-                    v.mountPoint
-                      ? `<span class="badge-mounted">${escapeHtml(v.mountPoint)}</span>`
-                      : `<span class="badge-ro">Not Mounted</span>`
-                  }
-                </div>
-              </div>
-              <div class="spec-table mt-15 mb-20">
-                <div class="spec-row">
-                  <span class="spec-label">UUID</span>
-                  <span class="btrfs-code text-truncate" title="${escapeHtml(v.uuid)}">${escapeHtml(v.uuid)}</span>
-                </div>
-                <div class="spec-row">
-                  <span class="spec-label">Hardware</span>
-                  <span class="spec-val text-muted">${escapeHtml(v.hwList)}</span>
-                </div>
-                <div class="spec-row">
-                  <span class="spec-label">Capacity</span>
-                  <span class="spec-val"><b>${escapeHtml(v.rawSize)}</b> (Usable: <span id="master-usable-${v.idx}">${escapeHtml(v.usable)}</span>)</span>
-                </div>
-                <div class="spec-row">
-                  <span class="spec-label">Protection</span>
-                  <span class="spec-val" id="master-raid-${v.idx}">${v.raid}</span>
-                </div>
-                <div class="spec-row">
-                  <span class="spec-label">Auto-Snapshot</span>
-                  <span class="spec-val"><span id="master-snap-${v.idx}">${escapeHtml(v.snapStatus)}</span>${
-                    !this.hasSnapper &&
-                    (v.snapStatus === "Not Configured" || v.snapStatus === "Loading...")
-                      ? ' <span class="badge-snapper-missing">No Snapper</span>'
-                      : ""
-                  }</span>
-                </div>
-              </div>
-              <div id="master-alloc-${v.idx}">${this.renderAllocBars(v, false)}</div>
-              <button class="btn btn-secondary w-100 mt-auto btn-action" data-action="open-detail" data-index="${v.idx}">Manage Storage Pool</button>
-            </div>`;
-          })
-          .join("")
-      : "<p class='mt-15 text-muted'>No active BTRFS storage pools detected.</p>";
+
+    if (!this.vols.length) {
+      container.innerHTML = "<p class='mt-15 text-muted'>No active BTRFS storage pools detected.</p>";
+      return;
+    }
+
+    container.innerHTML = this.vols
+      .map((v) => {
+        const alertBadge = v.hasMissing
+          ? '<span class="badge-danger">Degraded (Disk Missing)</span>'
+          : v.totalDevErrors > 0
+            ? '<span class="badge-meta-warn">⚠️ IO Errors</span>'
+            : "";
+
+        return `
+        <div class="btrfs-card hoverable h-100-col">
+          <div class="card-header-clean">
+            <div>
+              <h3 class="card-title-text">${escapeHtml(v.label)}</h3>
+              ${alertBadge ? `<div class="mt-5">${alertBadge}</div>` : ""}
+            </div>
+            <div class="card-status-tag">
+              ${
+                v.mountPoint
+                  ? `<span class="badge-mounted">${escapeHtml(v.mountPoint)}</span>`
+                  : `<span class="badge-ro">Not Mounted</span>`
+              }
+            </div>
+          </div>
+          <div class="spec-table mt-15 mb-20">
+            <div class="spec-row">
+              <span class="spec-label">UUID</span>
+              <span class="btrfs-code text-truncate" title="${escapeHtml(v.uuid)}">${escapeHtml(v.uuid)}</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Hardware</span>
+              <span class="spec-val text-muted">${escapeHtml(v.hwList)}</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Capacity</span>
+              <span class="spec-val"><b>${escapeHtml(v.rawSize)}</b> (Usable: <span id="master-usable-${v.idx}">${escapeHtml(v.usable)}</span>)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Protection</span>
+              <span class="spec-val" id="master-raid-${v.idx}">${v.raid}</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Auto-Snapshot</span>
+              <span class="spec-val"><span id="master-snap-${v.idx}">${escapeHtml(v.snapStatus)}</span>${
+                !this.hasSnapper && (v.snapStatus === "Not Configured" || v.snapStatus === "Loading...")
+                  ? ' <span class="badge-snapper-missing">No Snapper</span>'
+                  : ""
+              }</span>
+            </div>
+          </div>
+          <div id="master-alloc-${v.idx}">${this.renderAllocBars(v, false)}</div>
+          <button class="btn btn-secondary w-100 mt-auto btn-action" data-action="open-detail" data-index="${v.idx}">Manage Storage Pool</button>
+        </div>`;
+      })
+      .join("");
   },
 
+  /**
+   * Renders the deep management view for a specific storage pool.
+   */
   renderDetail(idx) {
     const container = $("detail-container");
     if (!container) return;
+
     const v = this.vols.find((vol) => vol.idx == idx);
     if (!v) return;
+
     container.setAttribute("data-active-index", idx);
 
     const devRows = v.devs
@@ -530,12 +572,14 @@ echo "$STATUS"
             : `<span class="badge-healthy">Healthy</span>`;
         const missingBadge = d.missing ? `<span class="badge-danger">MISSING</span>` : "";
         const canRemove = v.devs && v.devs.length > 1;
+
         const removeBtn =
           v.mountPoint && canRemove
             ? d.missing
               ? `<button class="btn-tool btn-tool-danger btn-action" data-action="remove-missing-dev" data-mount="${escapeHtml(v.mountPoint)}">Remove Missing</button>`
               : `<button class="btn-tool btn-tool-danger btn-action" data-action="remove-dev" data-mount="${escapeHtml(v.mountPoint)}" data-devpath="${escapeHtml(d.path)}">Remove</button>`
             : "";
+
         return `<tr>
           <td><span class="btrfs-code ${d.missing ? "text-danger" : ""}">${escapeHtml(d.path)}</span></td>
           <td class="text-muted text-sm">${escapeHtml(d.id)}</td>
@@ -546,8 +590,8 @@ echo "$STATUS"
       })
       .join("");
 
-    const isRoot =
-      v.mountPoint === "/" || v.devs.some((d) => this.rootDevs.has(d.path));
+    // Deterministic protection of operating system root disk
+    const isRoot = v.mountPoint === "/" || v.devs.some((d) => this.rootDevs.has(d.path));
     const bSafe = boxId(v.mountPoint);
 
     container.innerHTML = `
@@ -624,11 +668,11 @@ echo "$STATUS"
                     <div id="maint-console-${bSafe}" class="terminal-body"><span class="term-muted">Ready. Select an optimization or health task above.</span></div>
                   </div>
                 </div>`
-              : `<div class="warning-box"><p class="text-warning mb-5">Storage Pool Locked</p><p class="text-muted mb-0">Please mount this storage pool via the Cockpit <b>Storage</b> menu to unlock subvolume and maintenance tasks.</p></div>`
+              : `<div class="warning-box"><p class="text-warning mb-5">Storage Pool Locked</p><p class="text-muted mb-0">Mount this storage pool via Cockpit <b>Storage</b> to unlock subvolume and maintenance tasks.</p></div>`
           }
           <div class="btrfs-card danger-card">
             <h4 class="section-title text-danger">Delete Storage Pool</h4>
-            <p class="danger-desc">Permanently remove this storage pool. Unmounts the drives, purges all backup schedules, and wipes drive signatures.</p>
+            <p class="danger-desc">Permanently remove this storage pool. Unmounts member drives, cleans backup schedules, and wipes drive signatures.</p>
             ${
               isRoot
                 ? `<div class="warning-box"><p class="text-warning mb-0"><b>Protected System Drive:</b> This pool contains the operating system root (<code>/</code>) and cannot be deleted.</p></div>`
@@ -673,11 +717,16 @@ echo "$STATUS"
           </div>
         </div>
       </div>`;
+
     if (v.mountPoint) this.fetchSubvols(v.mountPoint, v.idx);
   },
 
+  /**
+   * Lists subvolumes and snapshots with optimized single-pass /etc/fstab parsing.
+   */
   async fetchSubvols(mount, idx) {
     if (!$(`subvol-list-${idx}`) && !$(`snapshot-list-${idx}`)) return;
+
     try {
       const script = `
 MNT="$1"
@@ -690,6 +739,14 @@ SNAP_IDS=$(btrfs subvolume list -s "$SCAN_DIR" 2>/dev/null | awk '{print $2}')
 RO_IDS=$(btrfs subvolume list -r "$SCAN_DIR" 2>/dev/null | awk '{print $2}')
 DEFAULT_ID=$(btrfs subvolume get-default "$SCAN_DIR" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="ID") print $(i+1)}' | head -n 1)
 ACTIVE_MOUNTS=$(findmnt -n -l -o TARGET,SOURCE -t btrfs 2>/dev/null | grep -v "^/tmp")
+
+# Optimized: Read /etc/fstab once into memory buffer
+FSTAB_SUBVOLS=$(awk '!/^[[:space:]]*#/ && NF>=4 {
+  n=split($4, o, ",");
+  for(i=1;i<=n;i++) {
+    if(match(o[i], /^subvol=(\\/?@?)(.*)/, m)) print m[2];
+  }
+}' /etc/fstab 2>/dev/null)
 
 btrfs subvolume list "$SCAN_DIR" 2>/dev/null | while read -r line; do
   [ -z "$line" ] && continue
@@ -717,6 +774,7 @@ btrfs subvolume list "$SCAN_DIR" 2>/dev/null | while read -r line; do
 
   resolve_subvol_path "$sub_path" || true
 
+  # Fetch creation time
   ctime=$(btrfs subvolume show -r "$id" "$SCAN_DIR" 2>/dev/null | awk '/Creation time:/ {print $3, $4; exit}')
   if [ -z "$ctime" ] && [ -n "$TARGET_PATH" ]; then
     ctime=$(btrfs subvolume show "$TARGET_PATH" 2>/dev/null | awk '/Creation time:/ {print $3, $4; exit}')
@@ -742,12 +800,16 @@ btrfs subvolume list "$SCAN_DIR" 2>/dev/null | while read -r line; do
       case "$attr" in *C*) nocow="true" ;; esac
     fi
 
-    in_fstab "$sub_path" && IN_FSTAB="true"
+    # Fast check against cached fstab buffer
+    if [ -n "$FSTAB_SUBVOLS" ] && echo "$FSTAB_SUBVOLS" | grep -qxF "$sub_path"; then
+      IN_FSTAB="true"
+    fi
   fi
 
   echo "$id|$sub_path|$nocow|$ctime|$MOUNT_PT|$IN_FSTAB|$IS_SNAP|$IS_RO|$IS_DEF"
 done
 `;
+
       const out = await cmd(["sh", "-c", script, "--", mount]);
       let subvolsRows = "";
       let snapshotsRows = "";
@@ -755,12 +817,12 @@ done
       out
         .trim()
         .split("\n")
-        .filter((l) => l.trim())
+        .filter((line) => line.trim())
         .forEach((line) => {
           const parts = line.split("|");
           if (parts.length < 4) return;
-          const [id, path, nocowStr, ctime, mountPt = "", inFstabStr, isSnapStr, isRoStr, isDefStr] =
-            parts;
+          const [id, path, nocowStr, ctime, mountPt = "", inFstabStr, isSnapStr, isRoStr, isDefStr] = parts;
+
           const nocow = nocowStr === "true";
           const inFstab = inFstabStr === "true";
           const isRo = isRoStr === "true";
@@ -773,14 +835,11 @@ done
             path.endsWith("/@snapshots");
 
           const isSnapshot = !isSnapshotContainer && isSnapStr === "true";
-
           const isRootSubvol =
             mountPt === "/" ||
-            (mount === "/" &&
-              (path === "@" || path === "" || path === "root" || path === "rootfs" || path === "@root"));
+            (mount === "/" && (path === "@" || path === "" || path === "root" || path === "rootfs" || path === "@root"));
 
-          const isProtected =
-            isSnapshotContainer || isRootSubvol || Boolean(mountPt) || inFstab;
+          const isProtected = isSnapshotContainer || isRootSubvol || Boolean(mountPt) || inFstab;
 
           if (isSnapshot) {
             snapshotsRows += `<tr>
@@ -795,32 +854,28 @@ done
               <td class="text-right">
                 <div class="btn-group-sharp">
                   <button class="btn-tool btn-action" title="Restore this snapshot into a new writable folder" data-action="subvol-ops" data-op="clone-snap" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-subid="${escapeHtml(id)}" data-index="${idx}">Restore</button>
-                  <button class="btn-tool btn-action" title="${isRo ? "Make writable to allow file modifications" : "Protect as Read-Only to prevent changes"}" data-action="subvol-ops" data-op="toggle-ro" data-ro="${isRo ? "false" : "true"}" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-index="${idx}">
+                  <button class="btn-tool btn-action" title="${isRo ? "Make writable" : "Protect as Read-Only"}" data-action="subvol-ops" data-op="toggle-ro" data-ro="${isRo ? "false" : "true"}" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-index="${idx}">
                     ${isRo ? "Unlock" : "Lock"}
                   </button>
-                  <button class="btn-tool btn-tool-danger btn-action" title="Permanently delete this backup snapshot" data-action="subvol-ops" data-op="del" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-subid="${escapeHtml(id)}" data-index="${idx}">Delete</button>
+                  <button class="btn-tool btn-tool-danger btn-action" title="Delete snapshot" data-action="subvol-ops" data-op="del" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-subid="${escapeHtml(id)}" data-index="${idx}">Delete</button>
                 </div>
               </td>
             </tr>`;
           } else {
             let badgeHtml = "";
-            if (isSnapshotContainer) {
-              badgeHtml += `<span class="badge-fstab">Snapshot Storage</span>`;
-            } else if (isRootSubvol) {
-              badgeHtml += `<span class="badge-root">OS Root (/)</span>`;
-            } else if (mountPt) {
-              badgeHtml += `<span class="badge-mounted">${escapeHtml(mountPt)}</span>`;
-            } else if (inFstab) {
-              badgeHtml += `<span class="badge-fstab">In /etc/fstab</span>`;
-            }
-            if (isDef) badgeHtml += `<span class="badge-default-mount">Default</span>`;
-            if (isRo) badgeHtml += `<span class="badge-ro">RO</span>`;
-            if (nocow) badgeHtml += `<span class="badge-nocow">NoCOW</span>`;
+            if (isSnapshotContainer) badgeHtml += '<span class="badge-fstab">Snapshot Storage</span>';
+            else if (isRootSubvol) badgeHtml += '<span class="badge-root">OS Root (/)</span>';
+            else if (mountPt) badgeHtml += `<span class="badge-mounted">${escapeHtml(mountPt)}</span>`;
+            else if (inFstab) badgeHtml += '<span class="badge-fstab">In /etc/fstab</span>';
+
+            if (isDef) badgeHtml += '<span class="badge-default-mount">Default</span>';
+            if (isRo) badgeHtml += '<span class="badge-ro">RO</span>';
+            if (nocow) badgeHtml += '<span class="badge-nocow">NoCOW</span>';
 
             const actionButtons = isSnapshotContainer
-              ? `<span class="text-muted text-sm">Protected</span>`
+              ? '<span class="text-muted text-sm">Protected</span>'
               : `<div class="btn-group-sharp">
-                  <button class="btn-tool btn-action" title="${nocow ? "Enable Copy-on-Write (+CoW) for data safety" : "Disable Copy-on-Write (NoCoW) for database and VM speed"}" data-action="subvol-ops" data-op="${nocow ? "enable-cow" : "disable-cow"}" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-index="${idx}">
+                  <button class="btn-tool btn-action" title="${nocow ? "Enable Copy-on-Write (+CoW)" : "Disable Copy-on-Write (NoCoW)"}" data-action="subvol-ops" data-op="${nocow ? "enable-cow" : "disable-cow"}" data-mount="${escapeHtml(mount)}" data-path="${escapeHtml(path)}" data-index="${idx}">
                     ${nocow ? "+CoW" : "NoCoW"}
                   </button>
                   ${
@@ -856,6 +911,7 @@ done
             </table>`
           : "<p class='p-15-muted'>No active user subvolumes found inside this pool root.</p>";
       }
+
       if ($(`snapshot-list-${idx}`)) {
         $(`snapshot-list-${idx}`).innerHTML = snapshotsRows
           ? `<table class="data-table">
@@ -872,10 +928,11 @@ done
             </table>`
           : "<p class='p-15-muted'>No snapshots created yet for this volume.</p>";
       }
-    } catch (e) {
+    } catch (err) {
       if ($(`subvol-list-${idx}`)) {
-        $(`subvol-list-${idx}`).innerHTML = `<p class='text-danger mt-15'>Load failed: ${escapeHtml(e.message)}</p>`;
+        $(`subvol-list-${idx}`).innerHTML = `<p class='text-danger mt-15'>Load failed: ${escapeHtml(err.message)}</p>`;
       }
     }
   },
 };
+
