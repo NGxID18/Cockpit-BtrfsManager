@@ -35,50 +35,46 @@ jobs:
           node --check src/router.js
           node - <<'EOF'
           const fs = require("fs");
-          const vm = require("vm");
           const assert = require("assert");
 
-          const sandbox = {
-            document: {
-              addEventListener: () => {},
-              getElementById: () => null,
-              querySelector: () => null,
-              querySelectorAll: () => [],
-              documentElement: { setAttribute: () => {}, classList: { toggle: () => {} } },
-              body: { addEventListener: () => {} },
-            },
-            localStorage: { getItem: () => "auto" },
+          globalThis.window = globalThis;
+          globalThis.document = {
             addEventListener: () => {},
-            matchMedia: () => ({ addEventListener: () => {} }),
+            getElementById: () => null,
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            documentElement: { setAttribute: () => {}, classList: { toggle: () => {} } },
+            body: { addEventListener: () => {} },
           };
-          sandbox.window = sandbox;
-          vm.createContext(sandbox);
+          globalThis.localStorage = { getItem: () => "auto" };
+          globalThis.addEventListener = () => {};
+          globalThis.matchMedia = () => ({ addEventListener: () => {} });
 
           for (const file of ["src/helper.js", "src/engine.js", "src/router.js"]) {
-            vm.runInContext(fs.readFileSync(file, "utf8"), sandbox, { filename: file });
+            new Function(fs.readFileSync(file, "utf8"))();
           }
 
-          assert.strictEqual(sandbox.boxId("/"), "root");
-          assert.strictEqual(sandbox.boxId("/mnt/DATA"), "-mnt-DATA");
-          assert.strictEqual(sandbox.parseSize("2.5 GiB"), 2.5 * 1024 ** 3);
-          assert.strictEqual(sandbox.formatSize(1024 ** 3), "1.00 GiB");
-          assert.strictEqual(sandbox.escapeHtml("<script>\"'&"), "&lt;script&gt;&quot;&#39;&amp;");
+          assert.strictEqual(window.boxId("/"), "root");
+          assert.strictEqual(window.boxId("/mnt/DATA"), "-mnt-DATA");
+          assert.strictEqual(window.parseSize("2.5 GiB"), 2.5 * 1024 ** 3);
+          assert.strictEqual(window.formatSize(1024 ** 3), "1.00 GiB");
+          assert.strictEqual(window.escapeHtml("<script>\"'&"), "&lt;script&gt;&quot;&#39;&amp;");
 
-          const p1 = sandbox.Dropdown.parseLabel("DUP (Duplicate) - 2 redundant copies (Recommended, Min 1 drive) [Current]");
+          const p1 = window.Dropdown.parseLabel("DUP (Duplicate) - 2 redundant copies (Recommended, Min 1 drive) [Current]");
           assert.deepStrictEqual(p1, {
             title: "DUP (Duplicate)",
             desc: "2 redundant copies (Recommended, Min 1 drive)",
             isCurrent: true,
           });
 
-          const p2 = sandbox.Dropdown.parseLabel("/dev/sda (500.00 GiB - Available)");
+          const p2 = window.Dropdown.parseLabel("/dev/sda (500.00 GiB - Available)");
           assert.deepStrictEqual(p2, {
             title: "/dev/sda",
             desc: "500.00 GiB - Available",
             isCurrent: false,
           });
 
-          const p3 = sandbox.Dropdown.parseLabel("Turn Off Automatic Backups");
+          const p3 = window.Dropdown.parseLabel("Turn Off Automatic Backups");
           assert.deepStrictEqual(p3, {
             title: "Turn Off Automatic Backups",
             desc: "",
