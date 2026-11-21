@@ -1,0 +1,147 @@
+name: Release Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build packages for (defaults to latest release)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release tag and version
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rpm dpkg-dev
+
+      - name: Build .deb package (Debian / Ubuntu)
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          PKG_DIR="build-deb/cockpit-btrfs-manager_${VERSION}_all"
+          mkdir -p "$PKG_DIR/DEBIAN" \
+                   "$PKG_DIR/usr/share/cockpit/btrfsmanager/src" \
+                   "$PKG_DIR/usr/share/doc/cockpit-btrfs-manager" \
+                   dist
+
+          install -m 0644 manifest.json index.html style.css "$PKG_DIR/usr/share/cockpit/btrfsmanager/"
+          install -m 0644 src/helper.js src/engine.js src/router.js "$PKG_DIR/usr/share/cockpit/btrfsmanager/src/"
+          install -m 0755 install.sh "$PKG_DIR/usr/share/cockpit/btrfsmanager/"
+          install -m 0644 README.md LICENSE "$PKG_DIR/usr/share/doc/cockpit-btrfs-manager/"
+
+          sed 's/^          //' <<EOF > "$PKG_DIR/DEBIAN/control"
+          Package: cockpit-btrfs-manager
+          Version: ${VERSION}
+          Section: admin
+          Priority: optional
+          Architecture: all
+          Depends: cockpit | cockpit-ws, btrfs-progs
+          Recommends: snapper, cron, git
+          Maintainer: NGxID18 <https://github.com/NGxID18/Cockpit-BtrfsManager>
+          Homepage: https://github.com/NGxID18/Cockpit-BtrfsManager
+          Description: BTRFS storage pool, RAID, subvolume, and snapshot manager for Cockpit
+           A zero-dependency Cockpit web extension to manage BTRFS storage pools,
+           online RAID profile conversions, subvolumes, Snapper backup schedules,
+           and online maintenance tasks directly from the Cockpit Web Console.
+          EOF
+
+          dpkg-deb --root-owner-group --build "$PKG_DIR" "dist/cockpit-btrfs-manager_${VERSION}_all.deb"
+
+      - name: Build .rpm package (Fedora / RHEL / openSUSE)
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          RPM_TOP="$PWD/build-rpm"
+          mkdir -p "$RPM_TOP"/{BUILD,RPMS,SOURCES,SPECS,SRPMS,tmp} dist
+
+          install -m 0644 manifest.json index.html style.css README.md LICENSE "$RPM_TOP/SOURCES/"
+          install -m 0755 install.sh "$RPM_TOP/SOURCES/"
+          install -m 0644 src/helper.js "$RPM_TOP/SOURCES/src-helper.js"
+          install -m 0644 src/engine.js "$RPM_TOP/SOURCES/src-engine.js"
+          install -m 0644 src/router.js "$RPM_TOP/SOURCES/src-router.js"
+
+          sed 's/^          //' <<EOF > "$RPM_TOP/SPECS/cockpit-btrfs-manager.spec"
+          %define _binary_payload w9.gzdio
+          %global debug_package %{nil}
+
+          Name:           cockpit-btrfs-manager
+          Version:        ${VERSION}
+          Release:        1
+          Summary:        BTRFS storage pool, RAID, subvolume, and snapshot manager for Cockpit
+          License:        MIT
+          URL:            https://github.com/NGxID18/Cockpit-BtrfsManager
+          BuildArch:      noarch
+          AutoReqProv:    no
+
+          Requires:       (cockpit or cockpit-ws)
+          Requires:       (btrfs-progs or btrfsprogs)
+          Recommends:     snapper
+          Recommends:     cronie
+          Recommends:     git
+
+          %description
+          A zero-dependency Cockpit web extension to manage BTRFS storage pools,
+          online RAID profile conversions, subvolumes, Snapper backup schedules,
+          and online maintenance tasks directly from the Cockpit Web Console.
+
+          %prep
+          %setup -c -T
+          cp %{_sourcedir}/LICENSE %{_sourcedir}/README.md .
+
+          %install
+          mkdir -p %{buildroot}/usr/share/cockpit/btrfsmanager/src
+          install -m 0644 %{_sourcedir}/manifest.json %{buildroot}/usr/share/cockpit/btrfsmanager/
+          install -m 0644 %{_sourcedir}/index.html %{buildroot}/usr/share/cockpit/btrfsmanager/
+          install -m 0644 %{_sourcedir}/style.css %{buildroot}/usr/share/cockpit/btrfsmanager/
+          install -m 0644 %{_sourcedir}/src-helper.js %{buildroot}/usr/share/cockpit/btrfsmanager/src/helper.js
+          install -m 0644 %{_sourcedir}/src-engine.js %{buildroot}/usr/share/cockpit/btrfsmanager/src/engine.js
+          install -m 0644 %{_sourcedir}/src-router.js %{buildroot}/usr/share/cockpit/btrfsmanager/src/router.js
+          install -m 0755 %{_sourcedir}/install.sh %{buildroot}/usr/share/cockpit/btrfsmanager/
+
+          %files
+          %defattr(-,root,root,-)
+          %license LICENSE
+          %doc README.md
+          %dir /usr/share/cockpit/btrfsmanager
+          %dir /usr/share/cockpit/btrfsmanager/src
+          /usr/share/cockpit/btrfsmanager/manifest.json
+          /usr/share/cockpit/btrfsmanager/index.html
+          /usr/share/cockpit/btrfsmanager/style.css
+          /usr/share/cockpit/btrfsmanager/src/helper.js
+          /usr/share/cockpit/btrfsmanager/src/engine.js
+          /usr/share/cockpit/btrfsmanager/src/router.js
+          /usr/share/cockpit/btrfsmanager/install.sh
+          EOF
+
+          rpmbuild --define "_topdir $RPM_TOP" --define "_tmppath $RPM_TOP/tmp" -bb "$RPM_TOP/SPECS/cockpit-btrfs-manager.spec"
+          cp "$RPM_TOP/RPMS/noarch/cockpit-btrfs-manager-${VERSION}-1.noarch.rpm" dist/
+
+      - name: Upload packages to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.meta.outputs.tag }}" dist/*.deb dist/*.rpm --repo "${{ github.repository }}" --clobber

@@ -65,6 +65,7 @@ Designed to match Cockpit's native PatternFly 6 interface (`cockpit-storaged`, `
 | `install.sh` | Cross-distro installer/uninstaller supporting `apt`, `dnf`, `zypper`, and `pacman` |
 | `LICENSE` | MIT License terms and copyright notice |
 | `.github/workflows/ci.yml` | Automated CI pipeline for shell, JS, CSS, and CSP verification |
+| `.github/workflows/release.yml` | Automated package builder attaching `.deb` and `.rpm` releases |
 
 ---
 
@@ -82,6 +83,8 @@ Designed to match Cockpit's native PatternFly 6 interface (`cockpit-storaged`, `
 
 ## Quick Installation
 
+### Option A: Automated Installer Script (All Distros)
+
 Run either command as `root` (or with `sudo`) to detect your distribution, install dependencies, and deploy to `/usr/share/cockpit/btrfsmanager`:
 
 ```bash
@@ -91,6 +94,23 @@ curl -sSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/in
 ```bash
 wget -qO- https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
 ```
+
+### Option B: Native `.deb` / `.rpm` Packages (GitHub Releases)
+
+Download the pre-built `.deb` or `.rpm` package from [GitHub Releases](https://github.com/NGxID18/Cockpit-BtrfsManager/releases/latest):
+
+- **Debian / Ubuntu (`apt`)**:
+  ```bash
+  sudo apt install ./cockpit-btrfs-manager_*_all.deb
+  ```
+- **Fedora / RHEL (`dnf`)**:
+  ```bash
+  sudo dnf install ./cockpit-btrfs-manager-*.noarch.rpm
+  ```
+- **openSUSE (`zypper`)**:
+  ```bash
+  sudo zypper install --allow-unsigned-rpm ./cockpit-btrfs-manager-*.noarch.rpm
+  ```
 
 Once installed, open Cockpit at `https://<server-ip>:9090`, sign in, and select **Btrfs Manager** from the sidebar.
 
