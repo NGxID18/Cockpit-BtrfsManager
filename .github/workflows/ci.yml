@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate shell scripts and manifest JSON
+        run: |
+          bash -n install.sh
+          shellcheck --severity=warning install.sh
+          python3 -m json.tool manifest.json > /dev/null
+
+      - name: Validate JavaScript syntax and unit tests
+        run: |
+          node --check src/helper.js
+          node --check src/engine.js
+          node --check src/router.js
+          node - <<'EOF'
+          const fs = require("fs");
+          const vm = require("vm");
+          const assert = require("assert");
+
+          const sandbox = {
+            document: {
+              addEventListener: () => {},
+              getElementById: () => null,
+              querySelector: () => null,
+              querySelectorAll: () => [],
+              documentElement: { setAttribute: () => {}, classList: { toggle: () => {} } },
+              body: { addEventListener: () => {} },
+            },
+            localStorage: { getItem: () => "auto" },
+            addEventListener: () => {},
+            matchMedia: () => ({ addEventListener: () => {} }),
+          };
+          sandbox.window = sandbox;
+          vm.createContext(sandbox);
+
+          for (const file of ["src/helper.js", "src/engine.js", "src/router.js"]) {
+            vm.runInContext(fs.readFileSync(file, "utf8"), sandbox, { filename: file });
+          }
+
+          assert.strictEqual(sandbox.boxId("/"), "root");
+          assert.strictEqual(sandbox.boxId("/mnt/DATA"), "-mnt-DATA");
+          assert.strictEqual(sandbox.parseSize("2.5 GiB"), 2.5 * 1024 ** 3);
+          assert.strictEqual(sandbox.formatSize(1024 ** 3), "1.00 GiB");
+          assert.strictEqual(sandbox.escapeHtml("<script>\"'&"), "&lt;script&gt;&quot;&#39;&amp;");
+
+          const p1 = sandbox.Dropdown.parseLabel("DUP (Duplicate) - 2 redundant copies (Recommended, Min 1 drive) [Current]");
+          assert.deepStrictEqual(p1, {
+            title: "DUP (Duplicate)",
+            desc: "2 redundant copies (Recommended, Min 1 drive)",
+            isCurrent: true,
+          });
+
+          const p2 = sandbox.Dropdown.parseLabel("/dev/sda (500.00 GiB - Available)");
+          assert.deepStrictEqual(p2, {
+            title: "/dev/sda",
+            desc: "500.00 GiB - Available",
+            isCurrent: false,
+          });
+
+          const p3 = sandbox.Dropdown.parseLabel("Turn Off Automatic Backups");
+          assert.deepStrictEqual(p3, {
+            title: "Turn Off Automatic Backups",
+            desc: "",
+            isCurrent: false,
+          });
+
+          console.log("JavaScript syntax and unit tests passed.");
+          EOF
+
+      - name: Run CSS, HTML, and Cockpit CSP static audit
+        run: |
+          python3 - <<'EOF'
+          import pathlib
+          import re
+
+          css = pathlib.Path("style.css").read_text(encoding="utf-8")
+          html = pathlib.Path("index.html").read_text(encoding="utf-8")
+          js = "\n".join(
+              p.read_text(encoding="utf-8")
+              for p in sorted(pathlib.Path("src").glob("*.js"))
+          )
+          hay = html + "\n" + js
+
+          clean_css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+          classes = set(
+              re.findall(
+                  r"\.([a-zA-Z_-][a-zA-Z0-9_-]*)",
+                  re.sub(r"\{[^}]*\}", "", clean_css, flags=re.S),
+              )
+          )
+          unused_cls = sorted(c for c in classes if c not in hay)
+          vars_def = set(re.findall(r"(--[a-zA-Z0-9_-]+)\s*:", clean_css))
+          unused_var = sorted(
+              v
+              for v in vars_def
+              if len(re.findall(re.escape(v) + r"\b", clean_css)) <= 1 and v not in hay
+          )
+          html_ids = re.findall(r'id="([^"]+)"', html)
+          unused_ids = [i for i in html_ids if js.count(i) == 0 and css.count(i) == 0]
+          inline_styles = re.findall(r"style\s*=", hay)
+          dom_style_muts = re.findall(r"\.style\.", hay)
+
+          assert not unused_cls, f"Unused CSS classes: {unused_cls}"
+          assert not unused_var, f"Unused CSS variables: {unused_var}"
+          assert not unused_ids, f"Unused HTML IDs: {unused_ids}"
+          assert not inline_styles, f"Inline style attributes found: {inline_styles}"
+          assert not dom_style_muts, f"DOM .style mutations found: {dom_style_muts}"
+
+          print("CSS, HTML, and CSP static audit passed.")
+          EOF
