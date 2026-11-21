@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+  <head>
+    <title>BTRFS Manager</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="style.css" type="text/css" rel="stylesheet" />
+
+    <script src="../base1/cockpit.js"></script>
+    <script src="src/helper.js"></script>
+    <script src="src/engine.js" defer></script>
+    <script src="src/router.js" defer></script>
+  </head>
+  <body class="pf-v6-m-tabular-nums">
+    <main class="ct-page-container">
+      <div id="view-master">
+        <div class="ct-page-header">
+          <div class="view-header-title">
+            <h2>Storage</h2>
+          </div>
+          <div class="view-header-actions">
+            <button class="btn btn-primary btn-sm" id="btn-create-raid">Create pool</button>
+            <button class="btn btn-secondary btn-sm" id="btn-refresh">Refresh</button>
+            <button class="btn btn-secondary btn-sm" id="btn-update-extension" title="Check for updates from GitHub">
+              Update
+            </button>
+          </div>
+        </div>
+
+        <div id="orphan-snap-container" class="orphan-snap-box hidden-element"></div>
+        <div id="disk-container"></div>
+
+        <div id="raid-form" class="btrfs-card raid-form-card hidden-element">
+          <h3>Create New Storage Pool</h3>
+          <div class="form-group">
+            <p class="form-label-block">1. Select Drives to Include:</p>
+            <div id="available-disks" class="available-disks-box">Scanning for available drives...</div>
+          </div>
+          <div class="form-group">
+            <p class="form-label-block">2. Data Protection Level:</p>
+            <label for="raid-profile" class="form-label">Data Profile:</label>
+            <select id="raid-profile" class="form-input">
+              <option value="single">Single (1 Drive - Standard storage)</option>
+              <option value="dup">DUP (1 Drive - Duplicate safety copy on same drive)</option>
+              <option value="raid1">RAID 1 Mirror (Min 2 Drives - Mirrored copy for safety)</option>
+              <option value="raid0">RAID 0 Stripe (Min 2 Drives - Maximum speed, no backup)</option>
+              <option value="raid10">RAID 10 (Min 4 Drives - High speed and mirrored safety)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <p class="form-label-block">3. Metadata Protection Level:</p>
+            <label for="meta-profile" class="form-label">Metadata Profile:</label>
+            <select id="meta-profile" class="form-input">
+              <option value="dup" selected>DUP (Duplicate copy - Recommended for safety)</option>
+              <option value="single">Single (Single copy - Lower overhead, saves space)</option>
+              <option value="raid1">RAID 1 Mirror (Min 2 Drives - Mirrored copy for safety)</option>
+              <option value="raid0">RAID 0 Stripe (Min 2 Drives - Maximum speed, no backup)</option>
+              <option value="raid10">RAID 10 (Min 4 Drives - High speed and mirrored safety)</option>
+            </select>
+            <small class="form-helper-text">
+              Controls how filesystem metadata (directory trees, checksums, filenames) is stored. DUP creates two independent copies even on a single drive to protect against corruption.
+            </small>
+          </div>
+          <div class="form-group">
+            <p class="form-label-block">4. Pool Name:</p>
+            <label for="volume-label" class="form-label">Pool Name:</label>
+            <input type="text" id="volume-label" class="form-input" placeholder="e.g., DataPool" />
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="btn-execute-format">Format Drives &amp; Create Pool</button>
+            <button class="btn btn-secondary" id="btn-cancel-format">Cancel</button>
+          </div>
+          <p id="format-status" class="status-console hidden-element mt-15"></p>
+        </div>
+      </div>
+
+      <div id="view-detail" class="hidden-element">
+        <div class="ct-breadcrumb-bar">
+          <nav class="pf-breadcrumb" aria-label="Breadcrumb">
+            <button class="btn-breadcrumb" id="btn-back-master">Storage</button>
+            <span class="breadcrumb-sep">&gt;</span>
+            <span id="detail-breadcrumb-current" class="breadcrumb-current">Pool</span>
+          </nav>
+        </div>
+        <div id="detail-container"></div>
+      </div>
+    </main>
+
+    <div id="add-dev-modal" class="modal-overlay hidden-element">
+      <div class="modal-content">
+        <h3>Add Drive to Storage Pool</h3>
+        <p>
+          Select an available drive to add to:
+          <strong id="modal-mount-target" class="text-primary"></strong>
+        </p>
+        <div class="form-group mt-15">
+          <select id="modal-disk-select" class="form-input w-100"></select>
+        </div>
+        <div class="warning-box mb-15 text-danger">
+          <strong>Warning:</strong> All files and partitions on the selected drive will be permanently erased!
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="btn-close-add-modal">Cancel</button>
+          <button class="btn btn-primary" id="btn-confirm-add-dev" disabled>Add Drive</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="destroy-vol-modal" class="modal-overlay hidden-element">
+      <div class="modal-content">
+        <h3 class="text-danger">Permanently Delete Storage Pool</h3>
+        <p class="mb-10">
+          You are about to delete storage pool: <strong id="destroy-vol-name" class="text-primary"></strong>
+        </p>
+        <div class="warning-box mb-15 text-danger">
+          <strong>CRITICAL WARNING:</strong>
+          <ul class="danger-list">
+            <li>All files, subfolders, and data will be <strong>permanently deleted</strong>.</li>
+            <li>All automatic backup schedules will be <strong>removed</strong>.</li>
+            <li>Active mount points will be <strong>unmounted</strong>.</li>
+            <li>Member drives (<span id="destroy-vol-devs" class="btrfs-code"></span>) will be <strong>wiped clean</strong>.</li>
+          </ul>
+        </div>
+        <div class="form-group mb-15">
+          <label for="destroy-vol-confirm-input" class="form-label-block">
+            Type <strong id="destroy-vol-expected-text" class="btrfs-code"></strong> to confirm deletion:
+          </label>
+          <input
+            type="text"
+            id="destroy-vol-confirm-input"
+            class="form-input w-100"
+            placeholder="Type confirmation here..."
+            autocomplete="off"
+          />
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="btn-cancel-destroy-vol">Cancel</button>
+          <button class="btn btn-danger" id="btn-execute-destroy-vol" disabled>Permanently Delete Pool</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="generic-modal" class="modal-overlay hidden-element">
+      <div class="modal-content">
+        <h3 id="generic-modal-title">Title</h3>
+        <p id="generic-modal-message" class="mb-15"></p>
+        <div id="generic-modal-input-container" class="form-group hidden-element mb-15">
+          <input type="text" id="generic-modal-input" class="form-input w-100" />
+          <select id="generic-modal-select" class="form-input w-100 hidden-element"></select>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="generic-modal-cancel">Cancel</button>
+          <button class="btn btn-primary" id="generic-modal-confirm">OK</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
