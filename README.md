@@ -9,6 +9,10 @@ Designed to match Cockpit's native PatternFly 6 interface (`cockpit-storaged`, `
 
 ---
 
+<img width="2559" height="1267" alt="Cockpit-BtrfsManager Dashboard" src="https://github.com/user-attachments/assets/152a34e7-13f9-412a-ab23-179de4d3240c" />
+
+<img width="2559" height="1267" alt="Cockpit-BtrfsManager Detail" src="https://github.com/user-attachments/assets/29639fa7-8270-4b97-9d1c-ae43c75e9463" />
+
 ## Key Features
 
 - **Storage Pool Dashboard**: At-a-glance cards displaying member hardware, mount points, dominant Data/Metadata RAID profiles, automatic backup status, drive error indicators, and compact inline usage bars.
