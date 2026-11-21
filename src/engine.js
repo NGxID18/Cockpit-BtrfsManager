@@ -704,7 +704,12 @@ ACTIVE_MOUNTS=$(findmnt -n -l -o TARGET,SOURCE -t btrfs 2>/dev/null | grep -v "^
 FSTAB_SUBVOLS=$(awk '!/^[[:space:]]*#/ && NF>=4 {
   n=split($4, o, ",");
   for(i=1;i<=n;i++) {
-    if(match(o[i], /^subvol=(\\/?@?)(.*)/, m)) print m[2];
+    if (o[i] ~ /^subvol=/) {
+      v = o[i];
+      sub(/^subvol=\\/*/, "", v);
+      print v;
+      if (v ~ /^@/) { sub(/^@/, "", v); print v; }
+    }
   }
 }' /etc/fstab 2>/dev/null)
 
@@ -755,7 +760,8 @@ btrfs subvolume list "$SCAN_DIR" 2>/dev/null | while read -r line; do
 
   if [ "$IS_SNAP" = "false" ]; then
     MOUNT_PT=$(echo "$ACTIVE_MOUNTS" | awk -v sp="$sub_path" '{
-      if (match($2, /\\[\\/?([^\\]]+)\\]/, m) && m[1] == sp) { print $1; exit }
+      s = $2;
+      if (sub(/^.*\\[\\/*/, "", s) && sub(/\\].*$/, "", s) && s == sp) { print $1; exit }
     }')
     [ -z "$TARGET_PATH" ] && [ -n "$MOUNT_PT" ] && TARGET_PATH="$MOUNT_PT"
 

@@ -100,85 +100,43 @@ case "$PKG_MANAGER" in
         export DEBIAN_FRONTEND=noninteractive
         echo -e "  -> Updating APT package lists..."
         apt-get update -qq
-        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cron, and core tools..."
+        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cron, and Git..."
         apt-get install -y --no-install-recommends \
             cockpit \
             btrfs-progs \
             snapper \
-            util-linux \
-            e2fsprogs \
             cron \
-            anacron \
-            git \
-            curl \
-            wget \
-            ca-certificates \
-            gawk \
-            grep \
-            sed \
-            coreutils \
-            findutils
+            git
         ;;
 
     dnf)
-        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cronie, and core tools via DNF..."
+        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cronie, and Git via DNF..."
         dnf install -y \
             cockpit \
             btrfs-progs \
             snapper \
-            util-linux \
-            e2fsprogs \
             cronie \
-            cronie-anacron \
-            git \
-            curl \
-            wget \
-            ca-certificates \
-            gawk \
-            grep \
-            sed \
-            coreutils \
-            findutils
+            git
         ;;
 
     zypper)
-        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cronie, and core tools via Zypper..."
+        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cronie, and Git via Zypper..."
         zypper --non-interactive install --no-recommends -y \
             cockpit \
             btrfsprogs \
             snapper \
-            util-linux \
-            e2fsprogs \
             cronie \
-            git \
-            curl \
-            wget \
-            ca-certificates \
-            gawk \
-            grep \
-            sed \
-            coreutils \
-            findutils
+            git
         ;;
 
     pacman)
-        echo -e "  -> Installing dependencies via Pacman..."
+        echo -e "  -> Installing Cockpit, Btrfs utilities, Snapper, Cronie, and Git via Pacman..."
         pacman -S --needed --noconfirm \
             cockpit \
             btrfs-progs \
             snapper \
-            util-linux \
-            e2fsprogs \
             cronie \
-            git \
-            curl \
-            wget \
-            ca-certificates \
-            gawk \
-            grep \
-            sed \
-            coreutils \
-            findutils
+            git
         ;;
 esac
 

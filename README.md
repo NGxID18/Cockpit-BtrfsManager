@@ -9,9 +9,21 @@ Designed to match Cockpit's native PatternFly 6 interface (`cockpit-storaged`, `
 
 ---
 
-<img width="2559" height="1267" alt="Cockpit-BtrfsManager Dashboard" src="https://github.com/user-attachments/assets/152a34e7-13f9-412a-ab23-179de4d3240c" />
+## Interface Preview
 
-<img width="2559" height="1267" alt="Cockpit-BtrfsManager Detail" src="https://github.com/user-attachments/assets/29639fa7-8270-4b97-9d1c-ae43c75e9463" />
+| **1. Storage Pools Overview** |
+| :---: |
+| <img width="2559" height="1267" alt="Cockpit-BtrfsManager Dashboard" src="https://github.com/user-attachments/assets/152a34e7-13f9-412a-ab23-179de4d3240c" /> |
+| *Master view displaying active BTRFS storage pools, hardware models, mount points, Data/Metadata profiles, automatic backup status, and inline usage bars.* |
+
+<br />
+
+| **2. Pool Detail, Health & Subvolumes Workspace** |
+| :---: |
+| <img width="2559" height="1267" alt="Cockpit-BtrfsManager Detail" src="https://github.com/user-attachments/assets/29639fa7-8270-4b97-9d1c-ae43c75e9463" /> |
+| *Detail view featuring pool properties, RAID profile actions, health diagnostics, maintenance controls (`scrub`, `balance`, `defragment`), and the tabbed Subvolumes / Snapshots / Member drives workspace.* |
+
+---
 
 ## Key Features
 
@@ -59,7 +71,7 @@ Designed to match Cockpit's native PatternFly 6 interface (`cockpit-storaged`, `
 ## Tested Distributions
 
 > [!NOTE]
-> Any Linux distribution with `cockpit`, `btrfs-progs`, `snapper`, `util-linux`, `e2fsprogs`, and `cron`/`cronie` can run this extension.
+> Any Linux distribution with `cockpit`, `btrfs-progs`, `snapper`, `cron`/`cronie`, and `git` can run this extension alongside standard base Linux utilities (`util-linux`, `e2fsprogs`, POSIX `awk`).
 
 - **Debian / Ubuntu (`apt`)**: Debian 12 & 13, Ubuntu 24.04 LTS – 26.10, Linux Mint, Pop!_OS
 - **Fedora / RHEL (`dnf`)**: Fedora 42 – 44, RHEL 10, Rocky Linux 10, AlmaLinux 10
@@ -81,6 +93,61 @@ wget -qO- https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/in
 ```
 
 Once installed, open Cockpit at `https://<server-ip>:9090`, sign in, and select **Btrfs Manager** from the sidebar.
+
+---
+
+## Manual Installation
+
+If you prefer reviewing or running each setup step manually instead of executing the installer script:
+
+### 1. Install Required System Dependencies
+
+Only the 5 essential packages are required (`cockpit`, `btrfs-progs`/`btrfsprogs`, `snapper`, `cron`/`cronie`, and `git`). Standard base system utilities (`util-linux`, `e2fsprogs` for `chattr`/`lsattr`, and POSIX `awk`/`sed`/`grep`) are already included by default on Linux distributions.
+
+#### Debian / Ubuntu (`apt`)
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends cockpit btrfs-progs snapper cron git
+```
+
+#### RHEL / Fedora (`dnf`)
+```bash
+sudo dnf install -y cockpit btrfs-progs snapper cronie git
+```
+
+#### openSUSE (`zypper`)
+```bash
+sudo zypper install --no-recommends -y cockpit btrfsprogs snapper cronie git
+```
+
+#### Arch Linux (`pacman`)
+```bash
+sudo pacman -S --needed cockpit btrfs-progs snapper cronie git
+```
+
+### 2. Enable Cockpit & Background Services
+
+Ensure the BTRFS kernel module and required systemd units are active:
+
+```bash
+sudo modprobe btrfs 2>/dev/null || true
+sudo mkdir -p /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly
+sudo systemctl enable --now cockpit.socket
+sudo systemctl enable --now cron.service 2>/dev/null || sudo systemctl enable --now crond.service 2>/dev/null || sudo systemctl enable --now cronie.service
+sudo systemctl enable --now snapper-cleanup.timer 2>/dev/null || true
+```
+
+### 3. Clone into Cockpit's Extension Directory
+
+```bash
+sudo mkdir -p /usr/share/cockpit
+sudo git clone --depth 1 https://github.com/NGxID18/Cockpit-BtrfsManager.git /usr/share/cockpit/btrfsmanager
+sudo chown -R root:root /usr/share/cockpit/btrfsmanager
+sudo chmod -R u=rwX,go=rX /usr/share/cockpit/btrfsmanager
+sudo chmod 755 /usr/share/cockpit/btrfsmanager/install.sh
+sudo git config --system --add safe.directory /usr/share/cockpit/btrfsmanager
+sudo systemctl try-restart cockpit.service
+```
 
 ---
 
