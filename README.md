@@ -75,7 +75,7 @@ Designed to match Cockpit's native PatternFly 6 interface (`cockpit-storaged`, `
 > Any Linux distribution with `cockpit`, `btrfs-progs`, `snapper`, `cron`/`cronie`, and `git` can run this extension alongside standard base Linux utilities (`util-linux`, `e2fsprogs`, POSIX `awk`).
 
 - **Debian / Ubuntu (`apt`)**: Debian 12 & 13, Ubuntu 24.04 LTS – 26.10, Linux Mint, Pop!_OS
-- **Fedora / RHEL (`dnf`)**: Fedora 42 – 44, RHEL 10, Rocky Linux 10, AlmaLinux 10
+- **Fedora / AlmaLinux (`dnf`)**: Fedora 42 – 44, AlmaLinux 10
 - **openSUSE (`zypper`)**: openSUSE Leap 16, openSUSE Tumbleweed
 - **Arch Linux (`pacman`)**: Arch Linux, Manjaro, CachyOS, EndeavourOS
 
@@ -103,7 +103,7 @@ Download the pre-built `.deb` or `.rpm` package from [GitHub Releases](https://g
   ```bash
   sudo apt install ./cockpit-btrfs-manager_*_all.deb
   ```
-- **Fedora / RHEL (`dnf`)**:
+- **Fedora / AlmaLinux (`dnf`)**:
   ```bash
   sudo dnf install ./cockpit-btrfs-manager-*.noarch.rpm
   ```
@@ -130,7 +130,7 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends cockpit btrfs-progs snapper cron git
 ```
 
-#### RHEL / Fedora (`dnf`)
+#### Fedora / AlmaLinux (`dnf`)
 ```bash
 sudo dnf install -y cockpit btrfs-progs snapper cronie git
 ```

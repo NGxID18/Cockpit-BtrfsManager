@@ -72,7 +72,7 @@ jobs:
 
           dpkg-deb --root-owner-group --build "$PKG_DIR" "dist/cockpit-btrfs-manager_${VERSION}_all.deb"
 
-      - name: Build .rpm package (Fedora / RHEL / openSUSE)
+      - name: Build .rpm package (Fedora / AlmaLinux / openSUSE)
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           RPM_TOP="$PWD/build-rpm"

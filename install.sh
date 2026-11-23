@@ -70,7 +70,7 @@ if command -v apt-get >/dev/null 2>&1; then
     ECOSYSTEM="Debian / Ubuntu Ecosystem (apt)"
 elif command -v dnf >/dev/null 2>&1; then
     PKG_MANAGER="dnf"
-    ECOSYSTEM="RHEL / Fedora Ecosystem (dnf)"
+    ECOSYSTEM="Fedora / AlmaLinux Ecosystem (dnf)"
 elif command -v zypper >/dev/null 2>&1; then
     PKG_MANAGER="zypper"
     ECOSYSTEM="openSUSE Ecosystem (zypper)"
@@ -83,7 +83,7 @@ else
     echo ""
     echo -e "Supported package managers for automatic setup:"
     echo -e "  1. ${GREEN}Debian / Ubuntu (apt)${NC}    - Debian 12/13, Ubuntu 24.04-26.10, Mint, Pop!_OS"
-    echo -e "  2. ${GREEN}RHEL / Fedora (dnf)${NC}      - Fedora 42-44, RHEL 10, Rocky Linux 10, AlmaLinux 10"
+    echo -e "  2. ${GREEN}Fedora / AlmaLinux (dnf)${NC} - Fedora 42-44, AlmaLinux 10"
     echo -e "  3. ${GREEN}openSUSE (zypper)${NC}        - openSUSE Leap 16, openSUSE Tumbleweed"
     echo -e "  4. ${GREEN}Arch Linux (pacman)${NC}      - Arch Linux, Manjaro, CachyOS, EndeavourOS"
     exit 1
