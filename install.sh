@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
+export PATH="$PATH:/usr/sbin:/sbin"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -11,12 +12,13 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 REPO_URL="https://github.com/NGxID18/Cockpit-BtrfsManager.git"
+REPO_BRANCH="${BTRFS_MANAGER_BRANCH:-Thesis}"
 TARGET_DIR="/usr/share/cockpit/btrfsmanager"
 
-if [ "$(id -u)" -ne 0 ]; then
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo -e "${RED}[ERROR] This script must be run as root (or with sudo).${NC}"
     echo -e "Please run:"
-    echo -e "  ${YELLOW}curl -sSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash${NC}"
+    echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/${REPO_BRANCH}/install.sh | sudo bash${NC}"
     exit 1
 fi
 
@@ -25,13 +27,21 @@ detect_os_and_pkg_manager() {
     OS_ID="unknown"
 
     if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
         . /etc/os-release
         OS_NAME="${PRETTY_NAME:-${NAME:-Unknown Linux}}"
         OS_ID="${ID:-unknown}"
     fi
 
+    OS_ID="${OS_ID,,}"
     PKG_MANAGER=""
     ECOSYSTEM=""
+
+    case "$OS_ID" in
+        opensuse*|sles|suse|nixos)
+            return 0
+            ;;
+    esac
 
     if command -v apt-get >/dev/null 2>&1; then
         PKG_MANAGER="apt"
@@ -39,13 +49,36 @@ detect_os_and_pkg_manager() {
     elif command -v dnf >/dev/null 2>&1; then
         PKG_MANAGER="dnf"
         ECOSYSTEM="Fedora / AlmaLinux Ecosystem (dnf)"
-    elif command -v zypper >/dev/null 2>&1; then
-        PKG_MANAGER="zypper"
-        ECOSYSTEM="openSUSE Ecosystem (zypper)"
     elif command -v pacman >/dev/null 2>&1; then
         PKG_MANAGER="pacman"
         ECOSYSTEM="Arch Linux Ecosystem (pacman)"
     fi
+}
+
+is_unsupported_dnf_distro() {
+    if [ "$PKG_MANAGER" != "dnf" ]; then
+        return 1
+    fi
+    case "$OS_ID" in
+        rhel|rocky|centos)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+has_btrfs_kernel_support() {
+    if [ -r /proc/filesystems ] && grep -qw "btrfs" /proc/filesystems 2>/dev/null; then
+        return 0
+    fi
+    if command -v modprobe >/dev/null 2>&1; then
+        if modprobe -n btrfs >/dev/null 2>&1 || modprobe btrfs >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 is_cockpit_installed() {
@@ -103,7 +136,7 @@ is_pkg_installed() {
         apt)
             dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"
             ;;
-        dnf|zypper)
+        dnf)
             rpm -q "$pkg" >/dev/null 2>&1
             ;;
         pacman)
@@ -136,9 +169,6 @@ remove_packages() {
             ;;
         dnf)
             dnf remove -y "${installed[@]}" || echo -e "  -> ${YELLOW}Warning: Some packages could not be removed cleanly due to dependencies.${NC}"
-            ;;
-        zypper)
-            zypper --non-interactive remove -y "${installed[@]}" || echo -e "  -> ${YELLOW}Warning: Some packages could not be removed cleanly due to dependencies.${NC}"
             ;;
         pacman)
             pacman -Rs --noconfirm "${installed[@]}" || echo -e "  -> ${YELLOW}Warning: Some packages could not be removed cleanly due to dependencies.${NC}"
@@ -228,11 +258,11 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ]; then
             echo -e "     Removes BTRFS Manager UI and automated snapshot cron jobs."
             echo -e "     Keeps Cockpit, Btrfs tools, and Snapper intact."
             echo -e "  ${YELLOW}2.${NC} Extension + Btrfs & Snapshot tools"
-            echo -e "     Removes extension, cron jobs, btrfs-progs/btrfsprogs, and snapper."
+            echo -e "     Removes extension, cron jobs, btrfs-progs, and snapper."
             echo -e "     Keeps Cockpit, cron daemon, and git intact."
             echo -e "  ${RED}3.${NC} Complete removal (Cockpit + Extension + Btrfs & Snapshot tools)"
             echo -e "     Stops/disables Cockpit and removes Cockpit, extension, cron jobs,"
-            echo -e "     btrfs-progs/btrfsprogs, and snapper. Keeps cron daemon and git."
+            echo -e "     btrfs-progs, and snapper. Keeps cron daemon and git."
             echo -e "  0. Cancel"
             echo ""
             printf "Enter your choice [1-3, default 1]: "
@@ -274,7 +304,7 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ]; then
         BTRFS_MOUNTS=$(get_btrfs_mounts)
         if is_root_btrfs; then
             echo -e "${BOLD}${RED}[WARNING] Your root filesystem (/) is currently mounted as Btrfs!${NC}"
-            echo -e "${RED}Removing btrfs-progs/btrfsprogs on a Btrfs root system can break initramfs regeneration or boot recovery.${NC}"
+            echo -e "${RED}Removing btrfs-progs on a Btrfs root system can break initramfs regeneration or boot recovery.${NC}"
             echo -e "Active Btrfs mounts: ${YELLOW}${BTRFS_MOUNTS}${NC}"
             echo ""
             if [ "$IS_INTERACTIVE" = true ] && [ "$FORCE_FLAG" != "--force" ]; then
@@ -289,7 +319,7 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ]; then
             fi
         elif [ -n "$BTRFS_MOUNTS" ]; then
             echo -e "${YELLOW}[WARNING] Active Btrfs mounts detected on this system: ${BTRFS_MOUNTS}${NC}"
-            echo -e "${YELLOW}Removing btrfs-progs/btrfsprogs will disable user-space management tools for those filesystems.${NC}"
+            echo -e "${YELLOW}Removing btrfs-progs will disable user-space management tools for those filesystems.${NC}"
             echo ""
             if [ "$IS_INTERACTIVE" = true ] && [ "$FORCE_FLAG" != "--force" ]; then
                 printf "Proceed with package removal? [y/N]: "
@@ -322,11 +352,7 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ]; then
             if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
                 systemctl disable --now snapper-cleanup.timer >/dev/null 2>&1 || true
             fi
-            if [ "$PKG_MANAGER" = "zypper" ]; then
-                remove_packages btrfsprogs snapper
-            else
-                remove_packages btrfs-progs snapper
-            fi
+            remove_packages btrfs-progs snapper
             echo ""
             echo -e "${GREEN}✔ BTRFS Manager extension and Btrfs/Snapper utilities have been removed.${NC}"
             echo -e "  -> Cockpit, cron daemon, and git were preserved."
@@ -340,9 +366,6 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ]; then
             case "$PKG_MANAGER" in
                 apt|dnf)
                     remove_packages cockpit cockpit-ws cockpit-bridge cockpit-system btrfs-progs snapper
-                    ;;
-                zypper)
-                    remove_packages cockpit cockpit-ws cockpit-bridge cockpit-system btrfsprogs snapper
                     ;;
                 pacman)
                     remove_packages cockpit btrfs-progs snapper
@@ -363,7 +386,7 @@ echo -e "${BOLD}${CYAN}           BTRFS Manager for Cockpit - Automated Installe
 echo -e "${BLUE}======================================================================${NC}"
 echo ""
 
-echo -e "${BLUE}[1/5] Checking OS, Package Manager, and existing Cockpit setup...${NC}"
+echo -e "${BLUE}[1/5] Checking OS, Package Manager, systemd, and Kernel Btrfs support...${NC}"
 
 detect_os_and_pkg_manager
 
@@ -371,12 +394,32 @@ if [ -z "$PKG_MANAGER" ]; then
     echo -e "${RED}[ERROR] Unsupported Operating System or Package Manager!${NC}"
     echo -e "Detected OS: ${YELLOW}${OS_NAME} (ID: ${OS_ID})${NC}"
     echo ""
-    echo -e "Supported package managers for automatic setup:"
+    echo -e "Supported package managers for automatic setup (systemd required):"
     echo -e "  1. ${GREEN}Debian / Ubuntu (apt)${NC}    - Debian 12/13, Ubuntu 24.04-26.10, Mint, Pop!_OS"
-    echo -e "  2. ${GREEN}Fedora / AlmaLinux (dnf)${NC} - Fedora 42-44, AlmaLinux 10"
-    echo -e "  3. ${GREEN}openSUSE (zypper)${NC}        - openSUSE Leap 16, openSUSE Tumbleweed"
-    echo -e "  4. ${GREEN}Arch Linux (pacman)${NC}      - Arch Linux, Manjaro, CachyOS, EndeavourOS"
+    echo -e "  2. ${GREEN}Fedora / AlmaLinux (dnf)${NC} - Fedora 42-45, AlmaLinux 10+ (RHEL / Rocky Linux unsupported)"
+    echo -e "  3. ${GREEN}Arch Linux (pacman)${NC}      - Arch Linux, CachyOS, Manjaro, EndeavourOS"
     exit 1
+fi
+
+if ! command -v systemctl >/dev/null 2>&1; then
+    echo -e "${RED}[ERROR] Unsupported init system: systemd is required.${NC}"
+    echo -e "Detected OS: ${YELLOW}${OS_NAME} (ID: ${OS_ID})${NC}"
+    exit 1
+fi
+
+if is_unsupported_dnf_distro; then
+    echo -e "${RED}[ERROR] Unsupported DNF distribution: ${OS_NAME} (ID: ${OS_ID})${NC}"
+    echo -e "${YELLOW}RHEL, Rocky Linux, and CentOS do not include Btrfs filesystem support in their stock kernel.${NC}"
+    echo -e "Supported DNF distributions: ${GREEN}Fedora (42-45)${NC}, ${GREEN}AlmaLinux 10+${NC}."
+    exit 1
+fi
+
+if [ -d /run/systemd/system ] || [ -d "/lib/modules/$(uname -r)" ]; then
+    if ! has_btrfs_kernel_support; then
+        echo -e "${RED}[ERROR] Btrfs filesystem support was not detected in the running kernel ($(uname -r)).${NC}"
+        echo -e "${YELLOW}Installation aborted safely before modifying packages (for example on RHEL, Rocky Linux, or AlmaLinux 9/EL9).${NC}"
+        exit 1
+    fi
 fi
 
 COCKPIT_PREINSTALLED=false
@@ -423,15 +466,18 @@ case "$PKG_MANAGER" in
         ;;
 
     dnf)
+        if [ "$OS_ID" != "fedora" ]; then
+            echo -e "  -> Enabling EPEL repository for ${OS_NAME} (required for snapper)..."
+            dnf install -y epel-release
+            if command -v crb >/dev/null 2>&1; then
+                crb enable >/dev/null 2>&1 || true
+            else
+                dnf config-manager --set-enabled crb >/dev/null 2>&1 || true
+            fi
+        fi
         PKGS+=(btrfs-progs snapper cronie git)
         echo -e "  -> Installing ${PKGS[*]} via DNF..."
         dnf install -y "${PKGS[@]}"
-        ;;
-
-    zypper)
-        PKGS+=(btrfsprogs snapper cronie git)
-        echo -e "  -> Installing ${PKGS[*]} via Zypper..."
-        zypper --non-interactive install --no-recommends -y "${PKGS[@]}"
         ;;
 
     pacman)
@@ -448,7 +494,7 @@ echo -e "${BLUE}[3/5] Verifying BTRFS kernel support and system services...${NC}
 
 if modprobe btrfs 2>/dev/null; then
     echo -e "  -> BTRFS kernel driver       : ${GREEN}Active (Module loaded)${NC}"
-elif grep -q "btrfs" /proc/filesystems 2>/dev/null; then
+elif grep -qw "btrfs" /proc/filesystems 2>/dev/null; then
     echo -e "  -> BTRFS kernel driver       : ${GREEN}Active (Built-in kernel)${NC}"
 else
     echo -e "  -> BTRFS kernel driver       : ${YELLOW}Warning: Could not verify btrfs in current kernel.${NC}"
@@ -493,15 +539,15 @@ mkdir -p /usr/share/cockpit
 if [ -d "$TARGET_DIR/.git" ]; then
     echo -e "  -> Existing Git repository detected. Updating to latest release..."
     git config --system --add safe.directory "$TARGET_DIR" 2>/dev/null || true
-    git -C "$TARGET_DIR" fetch origin main
-    git -C "$TARGET_DIR" reset --hard origin/main
+    git -C "$TARGET_DIR" fetch origin "$REPO_BRANCH"
+    git -C "$TARGET_DIR" reset --hard "origin/$REPO_BRANCH"
 else
     if [ -d "$TARGET_DIR" ]; then
         echo -e "  -> Replacing previous installation at ${TARGET_DIR}..."
         rm -rf "$TARGET_DIR"
     fi
     echo -e "  -> Downloading latest code from repository..."
-    git clone --depth 1 "$REPO_URL" "$TARGET_DIR"
+    git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$TARGET_DIR"
     git config --system --add safe.directory "$TARGET_DIR" 2>/dev/null || true
 fi
 

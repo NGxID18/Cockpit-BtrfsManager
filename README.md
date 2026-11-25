@@ -24,27 +24,28 @@ A Cockpit plugin for managing Btrfs storage pools, RAID profiles, subvolumes, Sn
 
 ## Requirements
 
-Requires `cockpit`, `btrfs-progs` (`btrfsprogs` on openSUSE), `snapper`, `cron`/`cronie`, and `git`, alongside standard Linux base tools (`util-linux`, `e2fsprogs`, POSIX `awk`).
+Requires `systemd`, `cockpit`, `btrfs-progs`, `snapper`, `cron`/`cronie`, and `git`, alongside standard Linux base tools (`util-linux`, `e2fsprogs`, POSIX `awk`) on a Linux kernel with Btrfs support.
 
-Tested distributions:
+Supported distributions (Thesis branch scope — `systemd` with `apt`, `dnf`, or `pacman`):
 
 - **Debian / Ubuntu (`apt`)**: Debian 12 & 13, Ubuntu 24.04 LTS – 26.10
-- **Fedora / AlmaLinux (`dnf`)**: Fedora 42 – 44, AlmaLinux 10
-- **openSUSE (`zypper`)**: Leap 16, Tumbleweed
+- **Fedora / AlmaLinux (`dnf`)**: Fedora 42 – 45, AlmaLinux 10+ *(RHEL and Rocky Linux are not supported because Btrfs is not included in their kernel)*
 - **Arch Linux (`pacman`)**: Arch Linux, CachyOS
+
+> Distributions outside these three package manager ecosystems (such as openSUSE/`zypper` or NixOS) are outside the scope of the `Thesis` branch.
 
 ## Installation
 
 ### Installer Script
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/Thesis/install.sh | sudo bash
 ```
 
 or with `wget`:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/main/install.sh | sudo bash
+wget -qO- https://raw.githubusercontent.com/NGxID18/Cockpit-BtrfsManager/Thesis/install.sh | sudo bash
 ```
 
 ### Packages (GitHub Releases)
@@ -59,10 +60,6 @@ Pre-built `.deb` and `.rpm` packages are attached to [GitHub Releases](https://g
   ```bash
   sudo dnf install ./cockpit-btrfs-manager-*.noarch.rpm
   ```
-- **openSUSE (`zypper`)**:
-  ```bash
-  sudo zypper install --allow-unsigned-rpm ./cockpit-btrfs-manager-*.noarch.rpm
-  ```
 
 ### Manual Setup
 
@@ -73,14 +70,15 @@ Pre-built `.deb` and `.rpm` packages are attached to [GitHub Releases](https://g
    sudo apt-get update && sudo apt-get install -y --no-install-recommends cockpit btrfs-progs snapper cron git
    ```
 
-   Fedora / AlmaLinux (`dnf`):
+   Fedora (`dnf`):
    ```bash
    sudo dnf install -y cockpit btrfs-progs snapper cronie git
    ```
 
-   openSUSE (`zypper`):
+   AlmaLinux 10+ (`dnf`, enable EPEL & CRB first for `snapper`):
    ```bash
-   sudo zypper install --no-recommends -y cockpit btrfsprogs snapper cronie git
+   sudo dnf install -y epel-release && sudo crb enable
+   sudo dnf install -y cockpit btrfs-progs snapper cronie git
    ```
 
    Arch Linux (`pacman`):
@@ -101,7 +99,7 @@ Pre-built `.deb` and `.rpm` packages are attached to [GitHub Releases](https://g
 
    ```bash
    sudo mkdir -p /usr/share/cockpit
-   sudo git clone --depth 1 https://github.com/NGxID18/Cockpit-BtrfsManager.git /usr/share/cockpit/btrfsmanager
+   sudo git clone --depth 1 --branch Thesis https://github.com/NGxID18/Cockpit-BtrfsManager.git /usr/share/cockpit/btrfsmanager
    sudo chown -R root:root /usr/share/cockpit/btrfsmanager
    sudo chmod -R u=rwX,go=rX /usr/share/cockpit/btrfsmanager
    sudo chmod 755 /usr/share/cockpit/btrfsmanager/install.sh

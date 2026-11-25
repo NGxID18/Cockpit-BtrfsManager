@@ -688,10 +688,9 @@ echo "Cleaned"
           if (op === "auto-snap") {
             if (!App.hasSnapper) {
               const script = `
-if command -v dnf >/dev/null 2>&1; then echo "sudo dnf install snapper"
-elif command -v zypper >/dev/null 2>&1; then echo "sudo zypper install snapper"
+if command -v apt-get >/dev/null 2>&1; then echo "sudo apt install snapper"
+elif command -v dnf >/dev/null 2>&1; then echo "sudo dnf install snapper"
 elif command -v pacman >/dev/null 2>&1; then echo "sudo pacman -S snapper"
-elif command -v apt-get >/dev/null 2>&1; then echo "sudo apt install snapper"
 else echo "Please install 'snapper' using your system package manager."
 fi`;
               cmd(["sh", "-c", script])
@@ -1451,12 +1450,12 @@ fi
 if [ -d "$TARGET_DIR/.git" ]; then
   cd "$TARGET_DIR"
   git config --global --add safe.directory "$TARGET_DIR" 2>/dev/null || true
-  git fetch origin main 2>&1
-  git reset --hard origin/main 2>&1
+  git fetch origin Thesis 2>&1
+  git reset --hard origin/Thesis 2>&1
 else
   TMP_DIR=$(mktemp -d)
   trap 'rm -rf "$TMP_DIR"' EXIT
-  git clone --depth 1 https://github.com/NGxID18/Cockpit-BtrfsManager "$TMP_DIR" 2>&1
+  git clone --depth 1 --branch Thesis https://github.com/NGxID18/Cockpit-BtrfsManager "$TMP_DIR" 2>&1
   cp -rf "$TMP_DIR"/. "$TARGET_DIR"/
 fi
 

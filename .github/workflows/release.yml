@@ -72,7 +72,7 @@ jobs:
 
           dpkg-deb --root-owner-group --build "$PKG_DIR" "dist/cockpit-btrfs-manager_${VERSION}_all.deb"
 
-      - name: Build .rpm package (Fedora / AlmaLinux / openSUSE)
+      - name: Build .rpm package (Fedora / AlmaLinux)
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           RPM_TOP="$PWD/build-rpm"
@@ -98,7 +98,7 @@ jobs:
           AutoReqProv:    no
 
           Requires:       (cockpit or cockpit-ws)
-          Requires:       (btrfs-progs or btrfsprogs)
+          Requires:       btrfs-progs
           Recommends:     snapper
           Recommends:     cronie
           Recommends:     git
