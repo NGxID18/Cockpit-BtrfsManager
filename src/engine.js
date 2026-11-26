@@ -154,7 +154,9 @@ window.App = {
           metaProfile: "DUP",
           mountOptsHtml: "",
           healthHtml: "",
+          masterHealthHtml: "",
           devErrors: {},
+          devSmart: {},
           totalDevErrors: 0,
         };
       });
@@ -176,6 +178,45 @@ window.App = {
     }
 
     await this.fetchDynamicMetrics();
+  },
+
+  computePoolHealth(v) {
+    const dangerDevs = [];
+    const warnDevs = [];
+    (v.devs || []).forEach((d) => {
+      const sm = v.devSmart?.[d.path];
+      if (!sm || !sm.supported) return;
+      if (sm.level === "danger") dangerDevs.push({ path: d.path, sm });
+      else if (sm.level === "warn") warnDevs.push({ path: d.path, sm });
+    });
+
+    if (v.hasMissing) {
+      v.masterHealthHtml = '<span class="pool-status text-danger"><span class="status-dot dot-danger"></span>Degraded</span>';
+      v.healthHtml = '<span class="status-dot dot-danger"></span><span class="text-danger">Degraded (missing drive)</span>';
+    } else if (v.totalDevErrors > 0 && dangerDevs.length > 0) {
+      v.masterHealthHtml = '<span class="pool-status text-danger"><span class="status-dot dot-danger"></span>IO Errors</span>';
+      v.healthHtml = `<span class="status-dot dot-danger"></span><span class="text-danger">${v.totalDevErrors} IO error(s), SMART critical on ${escapeHtml(dangerDevs.map((d) => d.path).join(", "))}</span>`;
+    } else if (v.totalDevErrors > 0) {
+      v.masterHealthHtml = '<span class="pool-status text-danger"><span class="status-dot dot-danger"></span>IO Errors</span>';
+      v.healthHtml = `<span class="status-dot dot-danger"></span><span class="text-danger">${v.totalDevErrors} disk error(s) detected</span>`;
+    } else if (dangerDevs.length > 0) {
+      v.masterHealthHtml = '<span class="pool-status text-danger"><span class="status-dot dot-danger"></span>SMART Critical</span>';
+      const detail =
+        dangerDevs.length === 1
+          ? `${dangerDevs[0].sm.summary} on ${dangerDevs[0].path}`
+          : `SMART failure across ${dangerDevs.length} drives`;
+      v.healthHtml = `<span class="status-dot dot-danger"></span><span class="text-danger">Critical: ${escapeHtml(detail)}</span>`;
+    } else if (warnDevs.length > 0) {
+      v.masterHealthHtml = '<span class="pool-status text-warning"><span class="status-dot dot-warn"></span>SMART Warning</span>';
+      const detail =
+        warnDevs.length === 1
+          ? `${warnDevs[0].sm.summary} on ${warnDevs[0].path} (SMART)`
+          : `SMART bad sectors on ${warnDevs.map((d) => d.path).join(", ")}`;
+      v.healthHtml = `<span class="status-dot dot-warn"></span><span class="text-warning">Warning: ${escapeHtml(detail)}</span>`;
+    } else {
+      v.masterHealthHtml = '<span class="pool-status"><span class="status-dot dot-ok"></span>Healthy</span>';
+      v.healthHtml = '<span class="status-dot dot-ok"></span>Healthy (0 disk errors)';
+    }
   },
 
   async checkOrphanedSnapshots() {
@@ -287,6 +328,9 @@ fi
 echo "$STATUS"
 `;
 
+    const allDevPaths = [...new Set(this.vols.flatMap((v) => (v.devs || []).map((d) => d.path)))];
+    const smartPromise = window.Smart ? window.Smart.probeDevices(allDevPaths) : Promise.resolve({});
+
     await Promise.all([
       this.checkOrphanedSnapshots(),
       ...this.vols.map(async (v) => {
@@ -298,17 +342,20 @@ echo "$STATUS"
           v.freeStr = "";
           v.usedPct = null;
           v.snapStatus = "Locked";
+          v.devSmart = await smartPromise.catch(() => ({}));
+          this.computePoolHealth(v);
           this.updateUI(v);
           return;
         }
 
         try {
-          const [dfOut, hOut, snapOut, optsOut, statsOut] = await Promise.all([
+          const [dfOut, hOut, snapOut, optsOut, statsOut, smartMap] = await Promise.all([
             cmd(["btrfs", "filesystem", "df", v.mountPoint]),
             cmd(["df", "-B1", "--output=size,avail", v.mountPoint]),
             cmd(["sh", "-c", snapScript, "--", v.mountPoint]).catch(() => "Not Configured"),
             cmd(["findmnt", "-n", "-o", "OPTIONS", "-T", v.mountPoint]).catch(() => ""),
             cmd(["btrfs", "device", "stats", v.mountPoint]).catch(() => ""),
+            smartPromise.catch(() => ({})),
           ]);
 
           if (optsOut) {
@@ -347,10 +394,8 @@ echo "$STATUS"
           }
           v.devErrors = devErrors;
           v.totalDevErrors = totalDevErrors;
-          v.healthHtml =
-            totalDevErrors > 0
-              ? `<span class="status-dot dot-danger"></span><span class="text-danger">${totalDevErrors} disk error(s) detected</span>`
-              : '<span class="status-dot dot-ok"></span>Healthy (0 disk errors)';
+          v.devSmart = smartMap || {};
+          this.computePoolHealth(v);
 
           const dataProfile = getDominantProfile(dfOut, "Data", "SINGLE");
           const metaProfile = getDominantProfile(dfOut, "Metadata", "DUP");
@@ -391,6 +436,8 @@ echo "$STATUS"
           v.freeStr = "";
           v.usedPct = null;
           v.snapStatus = "Error";
+          v.devSmart = await smartPromise.catch(() => ({}));
+          this.computePoolHealth(v);
         }
 
         this.updateUI(v);
@@ -413,11 +460,19 @@ echo "$STATUS"
     return v.devs
       .map((d) => {
         const errCount = (v.devErrors && v.devErrors[d.path]) || 0;
-        const statusCell = d.missing
-          ? '<span class="status-dot dot-danger"></span><span class="text-danger">Missing</span>'
-          : errCount > 0
-            ? `<span class="status-dot dot-danger"></span><span class="text-danger">${errCount} IO errors</span>`
-            : '<span class="status-dot dot-ok"></span>Healthy';
+        const sm = v.devSmart && v.devSmart[d.path];
+        let statusCell = '<span class="status-dot dot-ok"></span>Healthy';
+        if (d.missing) {
+          statusCell = '<span class="status-dot dot-danger"></span><span class="text-danger">Missing</span>';
+        } else if (errCount > 0 && sm && sm.supported && sm.level !== "ok") {
+          statusCell = `<span class="status-dot dot-danger"></span><span class="text-danger">${errCount} IO errors, ${escapeHtml(sm.summary)}</span>`;
+        } else if (errCount > 0) {
+          statusCell = `<span class="status-dot dot-danger"></span><span class="text-danger">${errCount} IO errors</span>`;
+        } else if (sm && sm.supported && sm.level === "danger") {
+          statusCell = `<span class="status-dot dot-danger"></span><span class="text-danger">${escapeHtml(sm.summary)}</span>`;
+        } else if (sm && sm.supported && sm.level === "warn") {
+          statusCell = `<span class="status-dot dot-warn"></span><span class="text-warning">Warning (${escapeHtml(sm.summary)})</span>`;
+        }
         const canRemove = v.devs && v.devs.length > 1;
 
         const removeBtn =
@@ -443,6 +498,7 @@ echo "$STATUS"
       $(`master-usable-${v.idx}`).innerHTML = this.renderProgress(v);
       if ($(`master-snap-${v.idx}`)) $(`master-snap-${v.idx}`).textContent = v.snapStatus;
       if ($(`master-raid-${v.idx}`)) $(`master-raid-${v.idx}`).innerHTML = v.raid;
+      if ($(`master-health-${v.idx}`) && v.masterHealthHtml) $(`master-health-${v.idx}`).innerHTML = v.masterHealthHtml;
     }
     if ($(`usable-display-${v.idx}`)) {
       $(`usable-display-${v.idx}`).innerHTML = this.renderProgress(v);
@@ -471,8 +527,7 @@ echo "$STATUS"
 
     container.innerHTML = `<div class="pool-master-grid">${this.vols
       .map((v) => {
-        const hasErr = v.hasMissing || v.totalDevErrors > 0;
-        const statusText = v.hasMissing ? "Degraded" : v.totalDevErrors > 0 ? "IO Errors" : "Healthy";
+        if (!v.masterHealthHtml) this.computePoolHealth(v);
 
         return `
         <div class="btrfs-card pool-master-card">
@@ -482,9 +537,7 @@ echo "$STATUS"
               <div class="text-muted text-sm">${escapeHtml(v.hwList)}</div>
             </div>
             <div class="toolbar-actions">
-              <span class="pool-status ${hasErr ? "text-danger" : ""}">
-                <span class="status-dot ${hasErr ? "dot-danger" : "dot-ok"}"></span>${statusText}
-              </span>
+              <span id="master-health-${v.idx}">${v.masterHealthHtml}</span>
               <button class="btn btn-secondary btn-sm btn-action" data-action="open-detail" data-index="${v.idx}">Manage</button>
             </div>
           </div>
@@ -574,7 +627,7 @@ echo "$STATUS"
               <span class="spec-label">Health status</span>
               <span class="spec-val">
                 <span id="health-display-${v.idx}">${v.healthHtml || '<span class="status-dot dot-ok"></span>Healthy (0 disk errors)'}</span>
-                ${v.mountPoint ? `<button class="ct-inline-action btn-action" data-action="device-stats" data-mount="${escapeHtml(v.mountPoint)}">Diagnostics</button>` : ""}
+                ${v.mountPoint ? `<button class="ct-inline-action btn-action" data-action="device-stats" data-mount="${escapeHtml(v.mountPoint)}" data-index="${v.idx}">Diagnostics</button>` : ""}
               </span>
             </div>
             <div class="spec-row">

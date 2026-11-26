@@ -15,8 +15,8 @@ A Cockpit plugin for managing Btrfs storage pools, RAID profiles, subvolumes, Sn
 
 ## Features
 
-- Overview of active Btrfs pools with member disk models, mount points, dominant Data/Metadata profiles, usage meters, and `btrfs device stats` error indicators.
-- Pool creation from unformatted, unmounted disks or partitions (`>= 256 MiB`) and online Data/Metadata profile conversion (`SINGLE`, `DUP`, `RAID0`, `RAID1`, `RAID10`).
+- Overview of active Btrfs pools with member disk models, mount points, dominant Data/Metadata profiles, usage meters, and combined `btrfs device stats` + kernel SMART ioctl (`SG_IO` SAT / NVMe) health indicators (works across USB enclosures without extra tools).
+- Pool creation from unformatted, unmounted disks or partitions (`>= 256 MiB`) and online Data/Metadata profile conversion (`SINGLE`, `DUP`, `RAID0`, `RAID1`, `RAID10`), with SMART bad-sector warnings before formatting or adding degraded drives.
 - Subvolume listing and creation from the top-level tree (`subvolid=5`, including unmounted subvolumes), `+CoW`/`NoCoW` toggling via `chattr`, and deletion checks.
 - Pool root snapshots, read-only flag toggling (`btrfs property set`), cloning snapshots into writable subvolumes, `hourly`/`daily`/`weekly` Snapper schedules with retention limits, and orphaned Snapper config cleanup.
 - Online `btrfs scrub`, `btrfs balance`, and recursive `defragment` runs with live output and background status polling.
@@ -24,7 +24,7 @@ A Cockpit plugin for managing Btrfs storage pools, RAID profiles, subvolumes, Sn
 
 ## Requirements
 
-Requires `systemd`, `cockpit`, `btrfs-progs`, `snapper`, `cron`/`cronie`, and `git`, alongside standard Linux base tools (`util-linux`, `e2fsprogs`, POSIX `awk`) on a Linux kernel with Btrfs support.
+Requires `systemd`, `cockpit`, `btrfs-progs`, `snapper`, `cron`/`cronie`, and `git`, alongside standard Linux base tools (`util-linux`, `e2fsprogs`, POSIX `awk`, and `python3` bundled with Cockpit) on a Linux kernel with Btrfs support.
 
 Supported distributions (Thesis branch scope — `systemd` with `apt`, `dnf`, or `pacman`):
 

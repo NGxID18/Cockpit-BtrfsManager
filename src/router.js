@@ -6,6 +6,7 @@ const {
   escapeHtml,
   formatSize,
   Sh,
+  Smart,
   App,
   Modal,
   customAlert,
@@ -16,6 +17,7 @@ const {
 
 const activeScrubTimers = {};
 const activeBalanceTimers = {};
+let lastScannedSmart = {};
 
 const stopAllMonitors = () => {
   Object.keys(activeScrubTimers).forEach((k) => {
@@ -29,30 +31,35 @@ const stopAllMonitors = () => {
 };
 window.stopAllMonitors = stopAllMonitors;
 
-const getEmptyDevices = () => {
+const getEmptyDevices = async () => {
   const usedDevs = new Set((App.vols || []).flatMap((v) => (v.devs || []).map((d) => d.path)));
-  return cmd(["lsblk", "-b", "-J", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,RO"]).then((data) => {
-    const extractEmpty = (devs) =>
-      devs.reduce((acc, d) => {
-        if (d.children?.length) return acc.concat(extractEmpty(d.children));
-        const isRo = d.ro === true || d.ro === "1" || d.ro === 1;
-        const sizeBytes = Number(d.size) || 0;
-        if (
-          !d.fstype &&
-          !d.mountpoint &&
-          !isRo &&
-          !usedDevs.has(d.path) &&
-          (d.type === "disk" || d.type === "part") &&
-          !d.path.startsWith("/dev/zram") &&
-          sizeBytes >= 256 * 1024 * 1024
-        ) {
-          d.size = formatSize(sizeBytes);
-          acc.push(d);
-        }
-        return acc;
-      }, []);
-    return extractEmpty(JSON.parse(data).blockdevices || []);
+  const data = await cmd(["lsblk", "-b", "-J", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,RO"]);
+  const extractEmpty = (devs) =>
+    devs.reduce((acc, d) => {
+      if (d.children?.length) return acc.concat(extractEmpty(d.children));
+      const isRo = d.ro === true || d.ro === "1" || d.ro === 1;
+      const sizeBytes = Number(d.size) || 0;
+      if (
+        !d.fstype &&
+        !d.mountpoint &&
+        !isRo &&
+        !usedDevs.has(d.path) &&
+        (d.type === "disk" || d.type === "part") &&
+        !d.path.startsWith("/dev/zram") &&
+        sizeBytes >= 256 * 1024 * 1024
+      ) {
+        d.size = formatSize(sizeBytes);
+        acc.push(d);
+      }
+      return acc;
+    }, []);
+  const emptyDevs = extractEmpty(JSON.parse(data).blockdevices || []);
+  const smartMap = Smart ? await Smart.probeDevices(emptyDevs.map((d) => d.path)) : {};
+  lastScannedSmart = { ...lastScannedSmart, ...smartMap };
+  emptyDevs.forEach((d) => {
+    d.smart = smartMap[d.path] || null;
   });
+  return emptyDevs;
 };
 
 const setMaintBtn = (mnt, kind, isRunning) => {
@@ -513,9 +520,35 @@ fi
         }
 
         case "device-stats": {
-          termLog(mnt, `btrfs device stats -T ${mnt}`, "cmd");
-          cmd(["btrfs", "device", "stats", "-T", mnt])
-            .then((out) => termLog(mnt, `[Physical Drive Diagnostics]\n${out}`, "status"))
+          const vIdx = tgt.getAttribute("data-index");
+          const v = App.vols.find((vol) => (vIdx ? vol.idx == vIdx : vol.mountPoint === mnt));
+          const devPaths = (v?.devs || []).map((d) => d.path).filter((p) => p && p !== "MISSING");
+
+          termLog(mnt, `btrfs device stats -T ${mnt} && kernel SMART ioctl (SG_IO SAT / NVMe)`, "cmd");
+          Promise.all([
+            cmd(["btrfs", "device", "stats", "-T", mnt]),
+            Smart ? Smart.probeDevices(devPaths) : Promise.resolve({}),
+          ])
+            .then(([statsOut, smartMap]) => {
+              if (v) {
+                v.devSmart = { ...(v.devSmart || {}), ...smartMap };
+                App.computePoolHealth(v);
+                App.updateUI(v);
+              }
+              const smartLines = devPaths.length
+                ? devPaths.map((p) => Smart.formatReport(p, smartMap[p])).join("\n\n")
+                : "No physical member devices available to query.";
+              const hasCrit =
+                (v?.totalDevErrors || 0) > 0 ||
+                devPaths.some((p) => smartMap[p]?.level === "danger");
+              const hasWarn = devPaths.some((p) => smartMap[p]?.level === "warn");
+              const logType = hasCrit ? "err" : hasWarn ? "warn" : "status";
+              termLog(
+                mnt,
+                `[Btrfs Kernel I/O & Checksum Counters]\n${statsOut.trim()}\n\n[SMART Hardware Health & Bad Sector Diagnostics]\n${smartLines}`,
+                logType,
+              );
+            })
             .catch((err) => termLog(mnt, `Diagnostics error: ${err.message}`, "err"));
           break;
         }
@@ -586,6 +619,7 @@ fi
           $("btn-confirm-add-dev").setAttribute("data-mount", mnt);
           $("btn-confirm-add-dev").disabled = true;
           $("modal-disk-select").innerHTML = `<option value="">Scanning for available drives...</option>`;
+          window.Dropdown?.refresh("modal-disk-select");
 
           getEmptyDevices()
             .then((devs) => {
@@ -593,15 +627,24 @@ fi
                 $("modal-disk-select").innerHTML = `<option value="">No available empty drives found.</option>`;
               } else {
                 $("modal-disk-select").innerHTML = devs
-                  .map(
-                    (d) => `<option value="${escapeHtml(d.path)}">${escapeHtml(d.path)} (${escapeHtml(d.size)} - Available)</option>`,
-                  )
+                  .map((d) => {
+                    const sm = d.smart;
+                    const tag =
+                      sm?.supported && sm.level === "danger"
+                        ? `SMART Critical: ${sm.summary}`
+                        : sm?.supported && sm.level === "warn"
+                          ? `SMART Warning: ${sm.summary}`
+                          : "Available";
+                    return `<option value="${escapeHtml(d.path)}">${escapeHtml(d.path)} (${escapeHtml(d.size)} - ${escapeHtml(tag)})</option>`;
+                  })
                   .join("");
                 $("btn-confirm-add-dev").disabled = false;
               }
+              window.Dropdown?.refresh("modal-disk-select");
             })
             .catch((err) => {
               $("modal-disk-select").innerHTML = `<option value="">Error: ${escapeHtml(err.message)}</option>`;
+              window.Dropdown?.refresh("modal-disk-select");
             });
           break;
 
@@ -1229,20 +1272,36 @@ fi
     const newDev = $("modal-disk-select").value;
     if (!newDev) return;
 
-    $("add-dev-modal").classList.add("hidden-element");
-    termLog(mnt, `btrfs device add -f ${newDev} ${mnt}`, "cmd");
-    setTermStatus(mnt, "Adding...", true);
+    const runAddDevice = () => {
+      $("add-dev-modal").classList.add("hidden-element");
+      termLog(mnt, `btrfs device add -f ${newDev} ${mnt}`, "cmd");
+      setTermStatus(mnt, "Adding...", true);
 
-    cmd(["btrfs", "device", "add", "-f", newDev, mnt])
-      .then((o) => {
-        termLog(mnt, `Device ${newDev} added successfully.\n${o}`, "success");
-        setTermStatus(mnt, "Idle", false);
-        App.fetch();
-      })
-      .catch((err) => {
-        termLog(mnt, `Failed to add device: ${err.message}`, "err");
-        setTermStatus(mnt, "Error", false);
-      });
+      cmd(["btrfs", "device", "add", "-f", newDev, mnt])
+        .then((o) => {
+          termLog(mnt, `Device ${newDev} added successfully.\n${o}`, "success");
+          setTermStatus(mnt, "Idle", false);
+          App.fetch();
+        })
+        .catch((err) => {
+          termLog(mnt, `Failed to add device: ${err.message}`, "err");
+          setTermStatus(mnt, "Error", false);
+        });
+    };
+
+    const sm = lastScannedSmart[newDev];
+    if (sm?.supported && sm.level !== "ok") {
+      customConfirm(
+        "SMART Hardware Warning",
+        `${newDev} reported SMART ${sm.level === "danger" ? "CRITICAL" : "warning"} status: ${sm.summary}.\n\nAdding a drive with physical media defects can risk pool reliability. Continue anyway?`,
+        "Add Drive Anyway",
+        runAddDevice,
+        true,
+      );
+      return;
+    }
+
+    runAddDevice();
   });
 
   on("btn-create-raid", "click", () => {
@@ -1256,10 +1315,16 @@ fi
       .then((devs) => {
         $("available-disks").innerHTML =
           devs
-            .map(
-              (d) =>
-                `<label class="disk-label-item"><input type="checkbox" name="tgt-disk" value="${escapeHtml(d.path)}"> <span class="btrfs-code">${escapeHtml(d.path)}</span> - Size: ${escapeHtml(d.size)}</label>`,
-            )
+            .map((d) => {
+              const sm = d.smart;
+              const smartBadge =
+                sm?.supported && sm.level === "danger"
+                  ? ` — <span class="text-danger"><span class="status-dot dot-danger"></span>SMART Critical (${escapeHtml(sm.summary)})</span>`
+                  : sm?.supported && sm.level === "warn"
+                    ? ` — <span class="text-warning"><span class="status-dot dot-warn"></span>SMART Warning (${escapeHtml(sm.summary)})</span>`
+                    : "";
+              return `<label class="disk-label-item"><input type="checkbox" name="tgt-disk" value="${escapeHtml(d.path)}"> <span class="btrfs-code">${escapeHtml(d.path)}</span> - Size: ${escapeHtml(d.size)}${smartBadge}</label>`;
+            })
             .join("") || "<span class='text-danger'>No available empty drives found.</span>";
         $("btn-execute-format").disabled = !devs.length;
       })
@@ -1395,9 +1460,18 @@ if [ -n "$MNT" ] && [ "$MNT" != "/" ] && awk -v m="$MNT" '!/^[[:space:]]*#/ && $
 
     if (!checkMinDrives(prof, "data") || !checkMinDrives(metaProf, "metadata")) return;
 
+    const smartAlerts = disks
+      .map((p) => ({ p, sm: lastScannedSmart[p] }))
+      .filter(({ sm }) => sm?.supported && sm.level !== "ok");
+    const smartWarnBlock = smartAlerts.length
+      ? `\n\nSMART HARDWARE WARNING:\n${smartAlerts
+          .map(({ p, sm }) => `- ${p}: ${sm.level === "danger" ? "CRITICAL" : "Warning"} (${sm.summary})`)
+          .join("\n")}`
+      : "";
+
     customConfirm(
       "Format Drives & Create Storage Pool",
-      `Are you sure you want to format ${disks.length} drive(s) into a new storage pool?\n\n- Data Profile: ${prof.toUpperCase()}\n- Metadata Profile: ${metaProf.toUpperCase()}\n- Drives: ${disks.join(", ")}\n\nWARNING: All files on these drives will be permanently erased.`,
+      `Are you sure you want to format ${disks.length} drive(s) into a new storage pool?\n\n- Data Profile: ${prof.toUpperCase()}\n- Metadata Profile: ${metaProf.toUpperCase()}\n- Drives: ${disks.join(", ")}${smartWarnBlock}\n\nWARNING: All files on these drives will be permanently erased.`,
       "Format & Create Pool",
       () => {
         const c = ["mkfs.btrfs", "-d", prof, "-m", metaProf, "-f"];

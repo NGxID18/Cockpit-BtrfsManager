@@ -552,6 +552,9 @@ body {
 .dot-ok {
   background-color: var(--success-dot);
 }
+.dot-warn {
+  background-color: var(--warning);
+}
 .dot-danger {
   background-color: var(--danger);
 }
